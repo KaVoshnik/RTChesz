@@ -11,11 +11,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
       - name: Format
+        working-directory: ./apps/api
         run: cargo fmt --all -- --check
       - name: Lint
+        working-directory: ./apps/api
         run: cargo clippy --all-targets --all-features -- -D warnings
       - name: Test
+        working-directory: ./apps/api
         run: cargo test
 
       # - name: Install Node.js dependencies
