@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Lint
+        run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Test
+        run: cargo test
+
+      # - name: Install Node.js dependencies
+      #   run: npm ci
+      # - name: Lint
+      #   run: npm run lint
+      # - name: Type Check
+      #   run: npm run typecheck
+      # - name: Test
+      #   run: npm test
+      # - name: Build
+      #   run: npm run build
+
+      # Это крч для тестов на фронте, перепишешь под себя/раскоментишь если нужно, я не трогаю
+      # т.к. не шарю че у тя по фронту будет в архитектуре,
+      # эт пример просто как я писал для nodejs но работает и с тайпом т.к. одно и то же по сути
