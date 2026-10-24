@@ -1,6 +1,9 @@
-use axum::{routing::get, Json, Router};
+mod config;
+mod db;
+
+use axum::{Json, Router, routing::get};
 use serde_json::json;
-use tokio::net::TcpListener;
+use std::net::SocketAddr;
 
 async fn health() -> Json<serde_json::Value> {
     Json(json!({
@@ -9,16 +12,33 @@ async fn health() -> Json<serde_json::Value> {
 }
 
 #[tokio::main]
-async fn main() {
-    let app = Router::new().route("/health", get(health)); // health route
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    dotenvy::dotenv().ok();
 
-    let listener = TcpListener::bind("127.0.0.1:3000")
-    .await
-    .expect("Failed to bind TCP listener");
+    let config = config::Config::from_env()?;
 
-    println!("Api on http://127.0.0.1:3000");
+    let pool = db::connect(&config.database_url).await?;
 
-    axum::serve(listener, app)
-    .await
-    .expect("Failed to start server");
+    sqlx::migrate!("./migrations").run(&pool).await?;
+
+    let app = Router::new().route("/health", get(health));
+
+    let address: SocketAddr =
+        format!("{}:{}", config.host, config.port)
+            .parse()
+            .map_err(|error| {
+                eprintln!(
+                    "Invalid server address '{}:{}': {}",
+                    config.host, config.port, error
+                );
+                error
+            })?;
+
+    let listener = tokio::net::TcpListener::bind(address).await?;
+
+    println!("API listening on {address}");
+
+    axum::serve(listener, app).await?;
+
+    Ok(())
 }
