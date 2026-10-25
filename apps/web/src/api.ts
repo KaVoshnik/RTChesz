@@ -65,11 +65,7 @@ interface AuthResponse {
   token: string;
 }
 
-export function register(data: {
-  username: string;
-  email: string;
-  password: string;
-}) {
+export function register(data: { username: string; email: string; password: string }) {
   return post<AuthResponse>('/auth/register', data);
 }
 
@@ -90,9 +86,7 @@ export function verifyResetCode(email: string, code: string) {
 // Достаём понятный текст из любой ошибки
 export function getErrorMessage(err: unknown): string {
   if (err instanceof ApiError) {
-    return err.retryAfter
-      ? `${err.message}. Повторите через ${err.retryAfter} с`
-      : err.message;
+    return err.retryAfter ? `${err.message}. Повторите через ${err.retryAfter} с` : err.message;
   }
   return 'Неизвестная ошибка';
 }

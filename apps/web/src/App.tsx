@@ -12,15 +12,15 @@ import {
 
 // Все "экраны" сайта
 type Screen =
-  | 'landing'       // лендинг
-  | 'login'         // вход
-  | 'register'      // регистрация
-  | 'forgot-email'  // восстановление: ввод почты
-  | 'forgot-code'   // восстановление: ввод кода
-  | 'success';      // экран "вы вошли"
+  | 'landing' // лендинг
+  | 'login' // вход
+  | 'register' // регистрация
+  | 'forgot-email' // восстановление: ввод почты
+  | 'forgot-code' // восстановление: ввод кода
+  | 'success'; // экран "вы вошли"
 
 const MIN_PASSWORD_LENGTH = 8; // минимальная длина пароля при регистрации
-const RESEND_COOLDOWN = 60;    // пауза перед повторной отправкой кода, сек
+const RESEND_COOLDOWN = 60; // пауза перед повторной отправкой кода, сек
 
 function App() {
   const bgRef = useRef<HTMLDivElement>(null);
@@ -62,7 +62,7 @@ function App() {
     const EASE = 0.08;
     const SCALE = 1.15; // должен совпадать со scale в App.css
 
-    const target = { x: 0, y: 0 };  // куда должна прийти картинка
+    const target = { x: 0, y: 0 }; // куда должна прийти картинка
     const current = { x: 0, y: 0 }; // где она сейчас
     let rafId = 0;
 
@@ -72,14 +72,11 @@ function App() {
       current.y += (target.y - current.y) * EASE;
 
       if (bgRef.current) {
-        bgRef.current.style.transform =
-          `translate3d(${current.x}px, ${current.y}px, 0) scale(${SCALE})`;
+        bgRef.current.style.transform = `translate3d(${current.x}px, ${current.y}px, 0) scale(${SCALE})`;
       }
 
       // Останавливаем цикл, когда почти дошли до цели
-      const done =
-        Math.abs(target.x - current.x) < 0.01 &&
-        Math.abs(target.y - current.y) < 0.01;
+      const done = Math.abs(target.x - current.x) < 0.01 && Math.abs(target.y - current.y) < 0.01;
 
       rafId = done ? 0 : requestAnimationFrame(animate);
     };
@@ -232,21 +229,13 @@ function App() {
 
       {/* Шапка сайта */}
       <header className="header">
-        <button
-          type="button"
-          className="header-logo"
-          onClick={() => goTo('landing')}
-        >
+        <button type="button" className="header-logo" onClick={() => goTo('landing')}>
           RTChesz
         </button>
 
         {/* Кнопка "Войти" видна только на лендинге */}
         {screen === 'landing' && (
-          <button
-            type="button"
-            className="header-button"
-            onClick={() => goTo('login')}
-          >
+          <button type="button" className="header-button" onClick={() => goTo('login')}>
             Войти
           </button>
         )}
@@ -255,9 +244,7 @@ function App() {
       {/* ---------- Лендинг ---------- */}
       {screen === 'landing' && (
         <main className="landing">
-          <h1 className="landing-title">
-            Здесь скоро появится лендинг страница
-          </h1>
+          <h1 className="landing-title">Здесь скоро появится лендинг страница</h1>
         </main>
       )}
 
@@ -268,25 +255,29 @@ function App() {
           {/* ===== Вход и регистрация ===== */}
           {(screen === 'login' || screen === 'register') && (
             <>
-              <h2 className="auth-title">
-                {isLogin ? 'Вход' : 'Регистрация'}
-              </h2>
+              <h2 className="auth-title">{isLogin ? 'Вход' : 'Регистрация'}</h2>
               <p className="auth-subtitle">
-                {isLogin
-                  ? 'Рады видеть вас снова'
-                  : 'Создайте аккаунт, чтобы начать играть'}
+                {isLogin ? 'Рады видеть вас снова' : 'Создайте аккаунт, чтобы начать играть'}
               </p>
 
-              <button
-                type="button"
-                className="google-button"
-                onClick={handleGoogle}
-              >
+              <button type="button" className="google-button" onClick={handleGoogle}>
                 <svg width="20" height="20" viewBox="0 0 48 48" aria-hidden="true">
-                  <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z" />
-                  <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z" />
-                  <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z" />
-                  <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z" />
+                  <path
+                    fill="#EA4335"
+                    d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"
+                  />
+                  <path
+                    fill="#4285F4"
+                    d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"
+                  />
+                  <path
+                    fill="#FBBC05"
+                    d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"
+                  />
+                  <path
+                    fill="#34A853"
+                    d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"
+                  />
                 </svg>
                 Войти через Google
               </button>
@@ -363,11 +354,7 @@ function App() {
                 )}
 
                 <button type="submit" className="auth-button" disabled={loading}>
-                  {loading
-                    ? 'Подождите…'
-                    : isLogin
-                      ? 'Войти'
-                      : 'Создать аккаунт'}
+                  {loading ? 'Подождите…' : isLogin ? 'Войти' : 'Создать аккаунт'}
                 </button>
               </form>
 
@@ -388,9 +375,7 @@ function App() {
           {screen === 'forgot-email' && (
             <>
               <h2 className="auth-title">Восстановление пароля</h2>
-              <p className="auth-subtitle">
-                Введите почту, и мы отправим на неё код
-              </p>
+              <p className="auth-subtitle">Введите почту, и мы отправим на неё код</p>
 
               <form className="auth-form" onSubmit={handleSendCode}>
                 <input
@@ -416,11 +401,7 @@ function App() {
               </form>
 
               <p className="auth-switch">
-                <button
-                  type="button"
-                  className="auth-link"
-                  onClick={() => goTo('login')}
-                >
+                <button type="button" className="auth-link" onClick={() => goTo('login')}>
                   ← Назад ко входу
                 </button>
               </p>
@@ -473,17 +454,11 @@ function App() {
                   onClick={handleResend}
                   disabled={loading || cooldown > 0}
                 >
-                  {cooldown > 0
-                    ? `Повторить через ${cooldown} с`
-                    : 'Отправить ещё раз'}
+                  {cooldown > 0 ? `Повторить через ${cooldown} с` : 'Отправить ещё раз'}
                 </button>
               </p>
               <p className="auth-switch">
-                <button
-                  type="button"
-                  className="auth-link"
-                  onClick={() => goTo('forgot-email')}
-                >
+                <button type="button" className="auth-link" onClick={() => goTo('forgot-email')}>
                   ← Изменить почту
                 </button>
               </p>
@@ -496,11 +471,7 @@ function App() {
               <h2 className="auth-title">Готово!</h2>
               <p className="auth-subtitle">Вы успешно вошли в аккаунт</p>
               <div className="auth-form">
-                <button
-                  type="button"
-                  className="auth-button"
-                  onClick={() => goTo('landing')}
-                >
+                <button type="button" className="auth-button" onClick={() => goTo('landing')}>
                   На главную
                 </button>
               </div>
