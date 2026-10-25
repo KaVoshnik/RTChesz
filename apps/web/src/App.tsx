@@ -1,5 +1,14 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import './App.css';
+import {
+  ApiError,
+  register,
+  login,
+  sendResetCode,
+  verifyResetCode,
+  saveToken,
+  getErrorMessage,
+} from './api';
 
 // Все "экраны" сайта
 type Screen =
@@ -7,7 +16,11 @@ type Screen =
   | 'login'         // вход
   | 'register'      // регистрация
   | 'forgot-email'  // восстановление: ввод почты
-  | 'forgot-code';  // восстановление: ввод кода
+  | 'forgot-code'   // восстановление: ввод кода
+  | 'success';      // экран "вы вошли"
+
+const MIN_PASSWORD_LENGTH = 8; // минимальная длина пароля при регистрации
+const RESEND_COOLDOWN = 60;    // пауза перед повторной отправкой кода, сек
 
 function App() {
   const bgRef = useRef<HTMLDivElement>(null);
@@ -26,16 +39,34 @@ function App() {
   const [error, setError] = useState('');
   const [info, setInfo] = useState('');
 
+  // true, пока идёт запрос к серверу
+  const [loading, setLoading] = useState(false);
+
+  // Сколько секунд осталось до повторной отправки кода
+  const [cooldown, setCooldown] = useState(0);
+
+  // ---------- Таймер повторной отправки ----------
+  // Каждую секунду уменьшаем счётчик, пока не дойдёт до 0
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const id = setTimeout(() => setCooldown((c) => c - 1), 1000);
+    return () => clearTimeout(id);
+  }, [cooldown]);
+
   // ---------- Эффект плавающего фона ----------
   useEffect(() => {
+    // Если в системе включено "уменьшить движение", анимацию не запускаем
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
     const MAX_SHIFT = 25;
     const EASE = 0.08;
     const SCALE = 1.15; // должен совпадать со scale в App.css
 
-    const target = { x: 0, y: 0 };
-    const current = { x: 0, y: 0 };
+    const target = { x: 0, y: 0 };  // куда должна прийти картинка
+    const current = { x: 0, y: 0 }; // где она сейчас
     let rafId = 0;
 
+    // Вызывается перед каждым кадром: приближаем картинку к цели
     const animate = () => {
       current.x += (target.x - current.x) * EASE;
       current.y += (target.y - current.y) * EASE;
@@ -45,6 +76,7 @@ function App() {
           `translate3d(${current.x}px, ${current.y}px, 0) scale(${SCALE})`;
       }
 
+      // Останавливаем цикл, когда почти дошли до цели
       const done =
         Math.abs(target.x - current.x) < 0.01 &&
         Math.abs(target.y - current.y) < 0.01;
@@ -52,13 +84,14 @@ function App() {
       rafId = done ? 0 : requestAnimationFrame(animate);
     };
 
+    // При движении мыши только считаем новую цель
     const handleMouseMove = (e: MouseEvent) => {
       target.x = (e.clientX / window.innerWidth - 0.5) * 2 * -MAX_SHIFT;
       target.y = (e.clientY / window.innerHeight - 0.5) * 2 * -MAX_SHIFT;
       if (!rafId) rafId = requestAnimationFrame(animate);
     };
 
-    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mousemove', handleMouseMove, { passive: true });
     return () => {
       window.removeEventListener('mousemove', handleMouseMove);
       cancelAnimationFrame(rafId);
@@ -67,7 +100,7 @@ function App() {
 
   // ---------- Обработчики ----------
 
-  // Переход на другой экран (заодно очищаем ошибки и пароли)
+  // Переход на другой экран (заодно очищаем сообщения и пароли)
   const goTo = (next: Screen) => {
     setScreen(next);
     setError('');
@@ -78,36 +111,69 @@ function App() {
   };
 
   // Вход / регистрация
-  const handleAuthSubmit = (e: FormEvent) => {
-    e.preventDefault(); // не перезагружать страницу
+  const handleAuthSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (loading) return; // защита от двойной отправки
 
-    if (screen === 'register' && password !== password2) {
-      setError('Пароли не совпадают');
-      return;
+    if (screen === 'register') {
+      if (password.length < MIN_PASSWORD_LENGTH) {
+        setError(`Пароль должен быть не короче ${MIN_PASSWORD_LENGTH} символов`);
+        return;
+      }
+      if (password !== password2) {
+        setError('Пароли не совпадают');
+        return;
+      }
     }
 
     setError('');
-    // TODO: запрос на сервер
-    console.log(screen === 'login' ? 'Вход' : 'Регистрация', {
-      username,
-      email,
-      password,
-    });
+    setLoading(true);
+
+    try {
+      // Отправляем данные на сервер и ждём ответ
+      const result =
+        screen === 'login'
+          ? await login({ email, password })
+          : await register({ username: username.trim(), email, password });
+
+      // Сохраняем токен, который выдал сервер
+      saveToken(result.token);
+      goTo('success');
+    } catch (err) {
+      setError(getErrorMessage(err));
+    } finally {
+      // выполняется в любом случае: и при успехе, и при ошибке
+      setLoading(false);
+    }
   };
 
-  // Восстановление, шаг 1: отправить код на почту
-  const handleSendCode = (e: FormEvent) => {
+  // Восстановление, шаг 1: попросить сервер отправить код на почту
+  const handleSendCode = async (e: FormEvent) => {
     e.preventDefault();
-    // TODO: запрос на сервер, чтобы он отправил письмо с кодом
-    console.log('Отправляем код на', email);
+    if (loading) return;
+
     setError('');
     setInfo('');
-    setScreen('forgot-code');
+    setLoading(true);
+
+    try {
+      await sendResetCode(email);
+      setCooldown(RESEND_COOLDOWN);
+      setScreen('forgot-code');
+    } catch (err) {
+      if (err instanceof ApiError && err.retryAfter) {
+        setCooldown(err.retryAfter); // сервер сам сказал, сколько ждать
+      }
+      setError(getErrorMessage(err));
+    } finally {
+      setLoading(false);
+    }
   };
 
-  // Восстановление, шаг 2: проверить код
-  const handleCheckCode = (e: FormEvent) => {
+  // Восстановление, шаг 2: отправить введённый код на проверку
+  const handleCheckCode = async (e: FormEvent) => {
     e.preventDefault();
+    if (loading) return;
 
     if (code.length !== 6) {
       setError('Введите 6 цифр из письма');
@@ -115,21 +181,44 @@ function App() {
     }
 
     setError('');
-    // TODO: проверить код на сервере, затем показать форму нового пароля
-    console.log('Проверяем код', code, 'для', email);
+    setInfo('');
+    setLoading(true);
+
+    try {
+      await verifyResetCode(email, code);
+      // TODO: следующий шаг: экран "Новый пароль"
+      setInfo('Код подтверждён');
+    } catch (err) {
+      setError(getErrorMessage(err));
+    } finally {
+      setLoading(false);
+    }
   };
 
   // Отправить код ещё раз
-  const handleResend = () => {
-    // TODO: повторный запрос на сервер
-    console.log('Отправляем код повторно на', email);
+  const handleResend = async () => {
+    if (loading || cooldown > 0) return;
+
     setError('');
-    setInfo('Код отправлен повторно');
+    setInfo('');
+    setLoading(true);
+
+    try {
+      await sendResetCode(email);
+      setCooldown(RESEND_COOLDOWN);
+      setInfo('Код отправлен повторно');
+    } catch (err) {
+      if (err instanceof ApiError && err.retryAfter) {
+        setCooldown(err.retryAfter);
+      }
+      setError(getErrorMessage(err));
+    } finally {
+      setLoading(false);
+    }
   };
 
-  // Вход через Google (заглушка)
+  // Вход через Google (пока заглушка: нужно согласовать с бэкендером)
   const handleGoogle = () => {
-    // TODO: подключить настоящую авторизацию Google
     console.log('Google sign-in');
   };
 
@@ -139,7 +228,7 @@ function App() {
     <div className="app-wrapper">
       {/* Фон: картинка + затемнение */}
       <div className="background-layer" ref={bgRef}></div>
-      <div className="background-overlay"></div>
+      <div className="background-overlay" aria-hidden="true"></div>
 
       {/* Шапка сайта */}
       <header className="header">
@@ -214,6 +303,8 @@ function App() {
                     className="auth-input"
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
+                    autoComplete="username"
+                    maxLength={32}
                     required
                   />
                 )}
@@ -224,6 +315,8 @@ function App() {
                   className="auth-input"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
+                  autoComplete="email"
+                  maxLength={254}
                   required
                 />
 
@@ -233,6 +326,9 @@ function App() {
                   className="auth-input"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
+                  autoComplete={isLogin ? 'current-password' : 'new-password'}
+                  minLength={isLogin ? undefined : MIN_PASSWORD_LENGTH}
+                  maxLength={128}
                   required
                 />
 
@@ -254,14 +350,24 @@ function App() {
                     className="auth-input"
                     value={password2}
                     onChange={(e) => setPassword2(e.target.value)}
+                    autoComplete="new-password"
+                    maxLength={128}
                     required
                   />
                 )}
 
-                {error && <div className="auth-error">{error}</div>}
+                {error && (
+                  <div className="auth-error" role="alert">
+                    {error}
+                  </div>
+                )}
 
-                <button type="submit" className="auth-button">
-                  {isLogin ? 'Войти' : 'Создать аккаунт'}
+                <button type="submit" className="auth-button" disabled={loading}>
+                  {loading
+                    ? 'Подождите…'
+                    : isLogin
+                      ? 'Войти'
+                      : 'Создать аккаунт'}
                 </button>
               </form>
 
@@ -293,11 +399,19 @@ function App() {
                   className="auth-input"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
+                  autoComplete="email"
+                  maxLength={254}
                   required
                 />
 
-                <button type="submit" className="auth-button">
-                  Отправить код
+                {error && (
+                  <div className="auth-error" role="alert">
+                    {error}
+                  </div>
+                )}
+
+                <button type="submit" className="auth-button" disabled={loading}>
+                  {loading ? 'Отправляем…' : 'Отправить код'}
                 </button>
               </form>
 
@@ -335,11 +449,19 @@ function App() {
                   required
                 />
 
-                {error && <div className="auth-error">{error}</div>}
-                {info && <div className="auth-info">{info}</div>}
+                {error && (
+                  <div className="auth-error" role="alert">
+                    {error}
+                  </div>
+                )}
+                {info && (
+                  <div className="auth-info" role="status">
+                    {info}
+                  </div>
+                )}
 
-                <button type="submit" className="auth-button">
-                  Подтвердить
+                <button type="submit" className="auth-button" disabled={loading}>
+                  {loading ? 'Проверяем…' : 'Подтвердить'}
                 </button>
               </form>
 
@@ -349,8 +471,11 @@ function App() {
                   type="button"
                   className="auth-link"
                   onClick={handleResend}
+                  disabled={loading || cooldown > 0}
                 >
-                  Отправить ещё раз
+                  {cooldown > 0
+                    ? `Повторить через ${cooldown} с`
+                    : 'Отправить ещё раз'}
                 </button>
               </p>
               <p className="auth-switch">
@@ -362,6 +487,23 @@ function App() {
                   ← Изменить почту
                 </button>
               </p>
+            </>
+          )}
+
+          {/* ===== Успешный вход ===== */}
+          {screen === 'success' && (
+            <>
+              <h2 className="auth-title">Готово!</h2>
+              <p className="auth-subtitle">Вы успешно вошли в аккаунт</p>
+              <div className="auth-form">
+                <button
+                  type="button"
+                  className="auth-button"
+                  onClick={() => goTo('landing')}
+                >
+                  На главную
+                </button>
+              </div>
             </>
           )}
         </div>

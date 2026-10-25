@@ -4,7 +4,6 @@
   isolation: isolate;
   width: 100%;
   height: 100vh;
-  box-sizing: border-box;
   padding-top: 64px; /* место под шапку, чтобы контент центрировался ниже неё */
   display: flex;
   justify-content: center;
@@ -22,7 +21,7 @@
   background-size: cover;
   background-position: center;
   z-index: 0;
-  transform: scale(1.15);
+  transform: scale(1.15); /* запас по краям, чтобы при сдвиге не было видно границ */
   will-change: transform;
 }
 
@@ -42,7 +41,6 @@
   left: 0;
   right: 0;
   height: 64px;
-  box-sizing: border-box;
   padding: 0 32px;
   display: flex;
   align-items: center;
@@ -112,13 +110,19 @@
   max-width: 400px;
   max-height: calc(100vh - 64px - 32px); /* если экран низкий, окно прокручивается */
   overflow-y: auto;
-  box-sizing: border-box;
   padding: 40px;
   background-color: #EFE9DC;
   border-radius: 16px;
   box-shadow: 0 20px 50px rgba(0, 0, 0, 0.35);
   color: #3b382f;
   animation: auth-appear 0.35s ease-out;
+}
+
+@media (max-width: 440px) {
+  .auth-container {
+    padding: 28px 20px;
+    border-radius: 12px;
+  }
 }
 
 @keyframes auth-appear {
@@ -283,4 +287,34 @@
   margin: -6px 0 0;
   font-weight: normal;
   font-size: 13px;
+}
+
+/* Заблокированные кнопки, пока идёт запрос или таймер */
+.auth-button:disabled,
+.auth-link:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Видимый фокус при навигации с клавиатуры (Tab) */
+.header-logo:focus-visible,
+.header-button:focus-visible,
+.google-button:focus-visible,
+.auth-button:focus-visible,
+.auth-link:focus-visible {
+  outline: 3px solid #706C61;
+  outline-offset: 2px;
+}
+
+/* Уважаем системную настройку "уменьшить движение" */
+@media (prefers-reduced-motion: reduce) {
+  .auth-container {
+    animation: none;
+  }
+  .auth-input,
+  .auth-button,
+  .google-button,
+  .header-button {
+    transition: none;
+  }
 }

@@ -1,8 +1,21 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
 body {
   margin: 0;
   padding: 0;
   font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
   color: #333;
   overflow: hidden; /* Запрещаем скролл, чтобы фон не ерзал */
-  background-color: #EFE9DC; /* Дополнительный фоллбек на случай сбоя обертки */
+  background-color: #EFE9DC; /* Запасной цвет на случай сбоя обертки */
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Кнопки и поля наследуют шрифт страницы (по умолчанию браузер ставит свой) */
+button,
+input {
+  font-family: inherit;
 }
