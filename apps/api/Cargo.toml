@@ -11,3 +11,8 @@ sqlx = { version = "0.9.0", features = ["runtime-tokio", "postgres", "uuid", "ch
 uuid = { version = "1.28.0", features = ["v4", "serde"] }
 chrono = { version = "0.4.45", features = ["serde"] }
 dotenvy = "0.15.7"
+thiserror = "2.0.21"
+serde = { version = "1.0.229", features = ["derive"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+tower-http = { version = "0.7.1", features = ["cors", "trace"] }

@@ -1,8 +1,11 @@
 mod config;
 mod db;
+mod state;
+mod error;
 
 use axum::{Json, Router, routing::get};
 use serde_json::json;
+use state::AppState;
 use std::net::SocketAddr;
 
 async fn health() -> Json<serde_json::Value> {
@@ -21,7 +24,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     sqlx::migrate!("./migrations").run(&pool).await?;
 
-    let app = Router::new().route("/health", get(health));
+    let state = AppState { pool, config: config.clone() };
+    
+    let app = Router::new().route("/health", get(health)).with_state(state);
 
     let address: SocketAddr =
         format!("{}:{}", config.host, config.port)
