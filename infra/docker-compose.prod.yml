@@ -1,0 +1,64 @@
+# Продакшен: Postgres + API (Rust) + Caddy (фронт и HTTPS).
+# Запуск (из папки infra):  docker compose -f docker-compose.prod.yml --env-file .env up -d --build
+name: rtchesz
+
+services:
+  db:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-rtchesz}
+      POSTGRES_USER: ${POSTGRES_USER:-rtchesz}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in infra/.env}
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    # Порты наружу НЕ открываем: к базе ходит только api внутри docker-сети.
+
+  api:
+    build:
+      context: ..
+      dockerfile: infra/api.Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-rtchesz}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-rtchesz}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in infra/.env}
+      CORS_ORIGINS: https://${DOMAIN:?Set DOMAIN in infra/.env}
+      TRUST_PROXY: "true" # перед API стоит наш Caddy, он дописывает X-Forwarded-For
+      RUST_LOG: ${RUST_LOG:-rtchesz_api=info,tower_http=info}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURITY: ${SMTP_SECURITY:-starttls}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+    # Порты наружу НЕ открываем: API доступен только через Caddy.
+
+  web:
+    build:
+      context: ..
+      dockerfile: infra/web.Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN in infra/.env}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp" # HTTP/3
+    volumes:
+      - caddy_data:/data # сертификаты (не терять, иначе упрёмся в лимиты Let's Encrypt)
+      - caddy_config:/config
+
+volumes:
+  postgres_data:
+  caddy_data:
+  caddy_config:

@@ -1,0 +1,32 @@
+# DOMAIN берётся из infra/.env (например rtchesz.ru).
+# Caddy сам получит и будет продлевать сертификат Let's Encrypt.
+
+www.{$DOMAIN} {
+	redir https://{$DOMAIN}{uri} permanent
+}
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	# /api/auth/login -> API получает /auth/login (префикс /api срезается)
+	handle_path /api/* {
+		reverse_proxy api:3000
+	}
+
+	# Всё остальное - собранный фронт
+	handle {
+		root * /srv
+		@assets path /assets/*
+		header @assets Cache-Control "public, max-age=31536000, immutable"
+		try_files {path} /index.html
+		file_server
+	}
+}
