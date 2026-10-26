@@ -1,0 +1,71 @@
+name: Uptime
+
+# Внешняя проверка: GitHub ходит на сайт снаружи (в отличие от мониторинга на самом сервере,
+# который не заметит, что упал сам сервер). Расписание GitHub неточное: задержки в несколько
+# минут - норма; в репозитории без активности 60 дней расписание отключается.
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read # чтобы узнать итог предыдущей проверки
+
+concurrency:
+  group: uptime
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      PUBLIC_URL: ${{ vars.PUBLIC_URL || 'https://rtchesz.ru' }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Проверить /api/health
+        id: check
+        run: |
+          ok=false
+          # Три попытки: единичный сетевой сбой не должен поднимать тревогу.
+          for attempt in 1 2 3; do
+            if body="$(curl --fail --silent --show-error --max-time 10 "$PUBLIC_URL/api/health")" \
+               && grep -q '"status":"ok"' <<<"$body"; then
+              ok=true
+              break
+            fi
+            echo "Попытка $attempt не удалась: ${body:-нет ответа}"
+            sleep 10
+          done
+          echo "ok=$ok" >> "$GITHUB_OUTPUT"
+
+      - name: Уведомить в Telegram (только при смене состояния)
+        run: |
+          [[ -n "$TELEGRAM_BOT_TOKEN" && -n "$TELEGRAM_CHAT_ID" ]] || { echo "Telegram не настроен - пропускаю"; exit 0; }
+
+          previous="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow uptime.yml \
+            --status completed --limit 1 --json conclusion --jq '.[0].conclusion' || true)"
+
+          text=""
+          if [[ "${{ steps.check.outputs.ok }}" != "true" && "$previous" != "failure" ]]; then
+            text="🔴 $PUBLIC_URL не отвечает (/api/health)"
+          elif [[ "${{ steps.check.outputs.ok }}" == "true" && "$previous" == "failure" ]]; then
+            text="🟢 $PUBLIC_URL снова доступен"
+          fi
+
+          if [[ -n "$text" ]]; then
+            curl --silent --show-error --max-time 15 \
+              --data-urlencode "chat_id=$TELEGRAM_CHAT_ID" \
+              --data-urlencode "text=$text" \
+              "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" > /dev/null
+          fi
+
+      # Красный запуск = сайт недоступен (GitHub пришлёт письмо о падении workflow).
+      - name: Итог
+        if: steps.check.outputs.ok != 'true'
+        run: |
+          echo "::error::$PUBLIC_URL/api/health не отвечает"
+          exit 1

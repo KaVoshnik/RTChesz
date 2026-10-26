@@ -14,8 +14,8 @@ dotenvy = "0.15.7"
 thiserror = "2.0.21"
 serde = { version = "1.0.229", features = ["derive"] }
 tracing = "0.1.44"
-tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
-tower-http = { version = "0.7.1", features = ["cors", "trace"] }
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
+tower-http = { version = "0.7.1", features = ["cors"] }
 
 # Авторизация и криптография
 argon2 = "0.6.0"
@@ -26,6 +26,8 @@ getrandom = "0.4.3"
 
 # Отправка писем (SMTP через rustls)
 lettre = { version = "0.11.23", default-features = false, features = ["smtp-transport", "builder", "tokio1-rustls-tls"] }
+metrics = "0.24.6"
+metrics-exporter-prometheus = { version = "0.18.3", default-features = false }
 
 [dev-dependencies]
 http-body-util = "0.1.5"

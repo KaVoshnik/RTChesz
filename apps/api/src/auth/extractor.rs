@@ -1,7 +1,7 @@
 use axum::{extract::FromRequestParts, http::header::AUTHORIZATION, http::request::Parts};
 use uuid::Uuid;
 
-use crate::{error::AppError, state::AppState};
+use crate::{error::AppError, repo::users, state::AppState};
 
 /// Авторизованный пользователь. Достаточно добавить аргумент `AuthUser`
 /// в обработчик, чтобы закрыть маршрут токеном (`Authorization: Bearer <jwt>`).
@@ -30,7 +30,19 @@ impl FromRequestParts<AppState> for AuthUser {
             return Err(required());
         }
 
-        let id = state.jwt.verify(token.trim())?;
-        Ok(AuthUser { id })
+        let verified = state.jwt.verify(token.trim())?;
+
+        // Подпись верна, но токен мог быть отозван (смена пароля, выход) или
+        // пользователь удалён: сверяем версию с БД.
+        let current = users::token_version(&state.pool, verified.user_id).await?;
+        if current != Some(verified.version) {
+            return Err(AppError::unauthorized(
+                "Недействительный или просроченный токен",
+            ));
+        }
+
+        Ok(AuthUser {
+            id: verified.user_id,
+        })
     }
 }

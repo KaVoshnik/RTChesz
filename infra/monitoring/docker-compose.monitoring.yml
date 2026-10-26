@@ -1,0 +1,61 @@
+# Метрики API: Prometheus (собирает) + Grafana (рисует). Необязательный стек, ~300-400 МБ RAM.
+#
+# Запуск (из папки infra):
+#   docker compose -f monitoring/docker-compose.monitoring.yml --env-file .env up -d
+#
+# Требуется, чтобы основной стек уже работал (сеть rtchesz_default создаёт он).
+# Наружу ничего не публикуется, кроме 127.0.0.1: к Grafana заходить через SSH-туннель:
+#   ssh -L 3001:127.0.0.1:3001 user@сервер   ->   http://localhost:3001  (admin / GRAFANA_PASSWORD)
+name: rtchesz-monitoring
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    mem_limit: 256m
+    logging: *default-logging
+    networks: [rtchesz]
+
+  grafana:
+    image: grafana/grafana:12.0.2
+    restart: unless-stopped
+    depends_on: [prometheus]
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:?Set GRAFANA_PASSWORD in infra/.env}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "127.0.0.1:3001:3000"
+    mem_limit: 256m
+    logging: *default-logging
+    networks: [rtchesz]
+
+volumes:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  rtchesz:
+    external: true
+    name: rtchesz_default

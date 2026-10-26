@@ -4,6 +4,8 @@ pub mod db;
 pub mod error;
 pub mod extract;
 pub mod mail;
+pub mod metrics;
+pub mod observability;
 pub mod rate_limit;
 pub mod repo;
 pub mod routes;

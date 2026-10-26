@@ -3,13 +3,20 @@ mod health;
 
 use axum::{
     Router,
-    extract::DefaultBodyLimit,
+    extract::{DefaultBodyLimit, State},
     http::{HeaderValue, Method, header},
+    middleware,
+    response::IntoResponse,
     routing::{get, post},
 };
-use tower_http::{cors::CorsLayer, trace::TraceLayer};
+use tower_http::cors::CorsLayer;
 
-use crate::{config::Config, error::AppError, state::AppState};
+use crate::{
+    config::Config,
+    error::AppError,
+    observability::{self, REQUEST_ID_HEADER},
+    state::AppState,
+};
 
 /// Максимальный размер тела запроса. Все наши JSON-запросы - считанные байты.
 const MAX_BODY_BYTES: usize = 16 * 1024;
@@ -25,12 +32,32 @@ pub fn build_router(state: AppState) -> Router {
         .route("/auth/verify-code", post(auth::verify_code))
         .route("/auth/reset-password", post(auth::reset_password))
         .route("/auth/me", get(auth::me))
+        .route("/auth/logout", post(auth::logout))
         .fallback(not_found)
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
-        .layer(TraceLayer::new_for_http())
+        // Request ID, логи запросов и метрики. Должен быть снаружи обработчиков и внутри CORS.
+        .layer(middleware::from_fn(observability::observe))
         // CORS - самый внешний слой, чтобы заголовки получали и ошибки (404, 429...).
         .layer(cors)
         .with_state(state)
+}
+
+/// Отдельный роутер для `/metrics`. Слушает свой адрес (`METRICS_ADDR`), который не публикуется
+/// наружу: Prometheus ходит к нему внутри docker-сети.
+pub fn build_metrics_router(state: AppState) -> Router {
+    Router::new()
+        .route("/metrics", get(metrics))
+        .with_state(state)
+}
+
+async fn metrics(State(state): State<AppState>) -> impl IntoResponse {
+    (
+        [(
+            header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
+        crate::metrics::render(&state.pool, state.config.db_max_connections),
+    )
 }
 
 fn cors_layer(config: &Config) -> CorsLayer {
@@ -51,7 +78,7 @@ fn cors_layer(config: &Config) -> CorsLayer {
         .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
         .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION])
         // Без этого браузер не отдаст фронту заголовок Retry-After (см. api.ts).
-        .expose_headers([header::RETRY_AFTER])
+        .expose_headers([header::RETRY_AFTER, REQUEST_ID_HEADER])
         .max_age(std::time::Duration::from_secs(3600))
 }
 

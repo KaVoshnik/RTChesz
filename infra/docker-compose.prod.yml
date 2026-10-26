@@ -2,6 +2,13 @@
 # Запуск (из папки infra):  docker compose -f docker-compose.prod.yml --env-file .env up -d --build
 name: rtchesz
 
+# Ротация логов контейнеров: без неё json-file растёт бесконечно и забивает диск VPS.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   db:
     image: postgres:18
@@ -12,6 +19,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in infra/.env}
     volumes:
       - postgres_data:/var/lib/postgresql
+    logging: *default-logging
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
@@ -39,6 +47,24 @@ services:
       SMTP_USERNAME: ${SMTP_USERNAME:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SMTP_FROM: ${SMTP_FROM:-}
+      LOG_FORMAT: json # одна JSON-строка на событие, в каждой - request_id
+      # /metrics на отдельном порту, наружу НЕ публикуется: его читает только Prometheus
+      # из docker-сети (см. infra/monitoring).
+      METRICS_ADDR: 0.0.0.0:9100
+      DB_MAX_CONNECTIONS: ${DB_MAX_CONNECTIONS:-10}
+      DB_ACQUIRE_TIMEOUT_SECS: ${DB_ACQUIRE_TIMEOUT_SECS:-5}
+      DB_STATEMENT_TIMEOUT_SECS: ${DB_STATEMENT_TIMEOUT_SECS:-10}
+      SHUTDOWN_GRACE_SECS: 20
+    # Дать API время дослужить активные запросы после SIGTERM (SHUTDOWN_GRACE_SECS = 20).
+    stop_grace_period: 30s
+    logging: *default-logging
+    # В образе нет curl: проверку делает сам бинарь (GET /health, то есть жива и БД).
+    healthcheck:
+      test: ["CMD", "rtchesz-api", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     # Порты наружу НЕ открываем: API доступен только через Caddy.
 
   web:
@@ -50,6 +76,7 @@ services:
       - api
     environment:
       DOMAIN: ${DOMAIN:?Set DOMAIN in infra/.env}
+    logging: *default-logging
     ports:
       - "80:80"
       - "443:443"
