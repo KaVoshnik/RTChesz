@@ -79,7 +79,7 @@ jobs:
 
       # Сервер собирает тот же образ при деплое: ловим поломку Dockerfile до деплоя.
       - name: Build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: infra/api.Dockerfile
