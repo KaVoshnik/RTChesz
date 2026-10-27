@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use axum::{Json, extract::State, http::StatusCode};
 use chrono::{DateTime, Utc};
+use metrics::counter;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -127,7 +128,8 @@ pub async fn register(
 
     let password_hash = password::hash_async(body.password).await?;
     let user = users::create(&state.pool, &email, &username, &password_hash).await?;
-    let token = state.jwt.issue(user.id)?;
+    let token = state.jwt.issue(user.id, user.token_version)?;
+    counter!("auth_registrations_total").increment(1);
 
     Ok((
         StatusCode::CREATED,
@@ -172,7 +174,8 @@ pub async fn login(
     match user {
         Some(user) if password_ok => {
             state.limiter.reset(&fails_key);
-            let token = state.jwt.issue(user.id)?;
+            counter!("auth_logins_total", "result" => "success").increment(1);
+            let token = state.jwt.issue(user.id, user.token_version)?;
 
             Ok(Json(AuthResponse {
                 token,
@@ -180,6 +183,7 @@ pub async fn login(
             }))
         }
         _ => {
+            counter!("auth_logins_total", "result" => "failure").increment(1);
             // Ошибку лимита здесь игнорируем: сама попытка уже отклонена.
             let _ = state
                 .limiter
@@ -314,6 +318,7 @@ pub async fn reset_password(
     password_resets::invalidate_all_for_user(&mut *tx, user_id).await?;
 
     tx.commit().await?;
+    counter!("auth_password_resets_total").increment(1);
 
     Ok(Json(MessageResponse {
         message: "Пароль изменён",
@@ -330,4 +335,19 @@ pub async fn me(
         .ok_or_else(|| AppError::unauthorized("Пользователь не найден"))?;
 
     Ok(Json(user.into()))
+}
+
+/// POST /auth/logout
+///
+/// Выход на всех устройствах: все ранее выданные токены пользователя перестают работать.
+pub async fn logout(
+    State(state): State<AppState>,
+    auth: AuthUser,
+) -> Result<Json<MessageResponse>, AppError> {
+    users::revoke_tokens(&state.pool, auth.id).await?;
+    counter!("auth_logouts_total").increment(1);
+
+    Ok(Json(MessageResponse {
+        message: "Вы вышли на всех устройствах",
+    }))
 }

@@ -24,6 +24,9 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(pool: PgPool, config: Config, mailer: Mailer) -> Result<Self, AppError> {
+        // Рекордер метрик ставится один раз на процесс; повторные вызовы безвредны.
+        crate::metrics::init();
+
         let jwt = JwtKeys::new(&config.jwt_secret, config.jwt_ttl);
 
         Ok(Self {

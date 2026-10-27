@@ -4,4 +4,4 @@ pub mod password;
 pub mod reset;
 
 pub use extractor::AuthUser;
-pub use jwt::JwtKeys;
+pub use jwt::{JwtKeys, VerifiedToken};

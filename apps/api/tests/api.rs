@@ -13,7 +13,13 @@ use axum::{
     response::Response,
 };
 use http_body_util::BodyExt;
-use rtchesz_api::{config::Config, mail::Mailer, routes::build_router, state::AppState};
+use rtchesz_api::{
+    config::Config,
+    db,
+    mail::Mailer,
+    routes::{build_metrics_router, build_router},
+    state::AppState,
+};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use tower::ServiceExt;
@@ -314,14 +320,123 @@ async fn me_requires_valid_bearer_token(pool: PgPool) {
     assert_eq!(response.headers()[header::WWW_AUTHENTICATE], "Bearer");
 }
 
+#[ignore = "нужна PostgreSQL (см. комментарий в начале файла)"]
+#[sqlx::test(migrations = "./migrations")]
+async fn logout_revokes_all_tokens_of_the_user(pool: PgPool) {
+    let app = app(pool);
+    let (_, body) = app
+        .register("alice", "alice@example.com", "password-123")
+        .await;
+    let first = body["token"].as_str().unwrap().to_string();
+
+    let (_, body) = app.login("alice@example.com", "password-123").await;
+    let second = body["token"].as_str().unwrap().to_string();
+
+    // Другой пользователь выход Alice не затрагивает.
+    let (_, body) = app.register("bob", "bob@example.com", "password-123").await;
+    let bob = body["token"].as_str().unwrap().to_string();
+
+    let response = app
+        .send(
+            Request::post("/auth/logout")
+                .header(header::AUTHORIZATION, format!("Bearer {first}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // Отозваны оба токена Alice (и тот, которым вышли, и выданный при другом входе).
+    assert_eq!(
+        app.get("/auth/me", Some(&first)).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        app.get("/auth/me", Some(&second)).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(app.get("/auth/me", Some(&bob)).await.0, StatusCode::OK);
+
+    // Новый вход выдаёт рабочий токен.
+    let (_, body) = app.login("alice@example.com", "password-123").await;
+    let fresh = body["token"].as_str().unwrap();
+    assert_eq!(app.get("/auth/me", Some(fresh)).await.0, StatusCode::OK);
+}
+
+#[ignore = "нужна PostgreSQL (см. комментарий в начале файла)"]
+#[sqlx::test(migrations = "./migrations")]
+async fn logout_requires_authorization(pool: PgPool) {
+    let app = app(pool);
+
+    let response = app
+        .send(Request::post("/auth/logout").body(Body::empty()).unwrap())
+        .await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[ignore = "нужна PostgreSQL (см. комментарий в начале файла)"]
+#[sqlx::test(migrations = "./migrations")]
+async fn token_without_ver_claim_issued_before_update_still_works(pool: PgPool) {
+    use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+    use hmac::{Hmac, KeyInit, Mac};
+    use sha2::Sha256;
+
+    let app = app(pool);
+    let (_, body) = app
+        .register("alice", "alice@example.com", "password-123")
+        .await;
+    let user_id = body["user"]["id"].as_str().unwrap().to_string();
+
+    // Токен в старом формате: без claim `ver`.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let header = URL_SAFE_NO_PAD.encode(r#"{"typ":"JWT","alg":"HS256"}"#);
+    let payload =
+        URL_SAFE_NO_PAD.encode(json!({ "sub": user_id, "iat": now, "exp": now + 600 }).to_string());
+    let mut mac = Hmac::<Sha256>::new_from_slice(app.state.config.jwt_secret.as_bytes()).unwrap();
+    mac.update(format!("{header}.{payload}").as_bytes());
+    let signature = URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes());
+    let legacy = format!("{header}.{payload}.{signature}");
+
+    assert_eq!(app.get("/auth/me", Some(&legacy)).await.0, StatusCode::OK);
+}
+
+#[ignore = "нужна PostgreSQL (см. комментарий в начале файла)"]
+#[sqlx::test(migrations = "./migrations")]
+async fn token_of_deleted_user_is_rejected(pool: PgPool) {
+    let app = app(pool.clone());
+    let (_, body) = app
+        .register("alice", "alice@example.com", "password-123")
+        .await;
+    let token = body["token"].as_str().unwrap().to_string();
+
+    sqlx::query("DELETE FROM users")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        app.get("/auth/me", Some(&token)).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+}
+
 // ---------- восстановление пароля ----------
 
 #[ignore = "нужна PostgreSQL (см. комментарий в начале файла)"]
 #[sqlx::test(migrations = "./migrations")]
 async fn full_password_reset_flow(pool: PgPool) {
     let app = app(pool);
-    app.register("alice", "alice@example.com", "old-password-1")
+    let (_, body) = app
+        .register("alice", "alice@example.com", "old-password-1")
         .await;
+    let old_token = body["token"].as_str().unwrap().to_string();
+    assert_eq!(
+        app.get("/auth/me", Some(&old_token)).await.0,
+        StatusCode::OK
+    );
 
     let (status, _) = app
         .post(
@@ -396,8 +511,16 @@ async fn full_password_reset_flow(pool: PgPool) {
     // Старый пароль не работает, новый - работает.
     let (status, _) = app.login("alice@example.com", "old-password-1").await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
-    let (status, _) = app.login("alice@example.com", "brand-new-password").await;
+    let (status, body) = app.login("alice@example.com", "brand-new-password").await;
     assert_eq!(status, StatusCode::OK);
+
+    // Смена пароля отзывает токены, выданные до неё; новый токен работает.
+    assert_eq!(
+        app.get("/auth/me", Some(&old_token)).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+    let new_token = body["token"].as_str().unwrap();
+    assert_eq!(app.get("/auth/me", Some(new_token)).await.0, StatusCode::OK);
 }
 
 #[ignore = "нужна PostgreSQL (см. комментарий в начале файла)"]
@@ -590,7 +713,7 @@ async fn cors_allows_frontend_and_exposes_retry_after(pool: PgPool) {
         "http://localhost:5173"
     );
 
-    // Обычный ответ отдаёт Retry-After в expose-headers (нужно для 429).
+    // Обычный ответ отдаёт Retry-After (нужен для 429) и X-Request-Id в expose-headers.
     let response = app
         .send(
             Request::get("/health")
@@ -601,7 +724,7 @@ async fn cors_allows_frontend_and_exposes_retry_after(pool: PgPool) {
         .await;
     assert_eq!(
         response.headers()[header::ACCESS_CONTROL_EXPOSE_HEADERS],
-        "retry-after"
+        "retry-after,x-request-id"
     );
 
     // Чужой origin не получает разрешения.
@@ -656,4 +779,188 @@ async fn registration_is_rate_limited_per_ip(pool: PgPool) {
         .await;
     assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
     assert!(response.headers().contains_key(header::RETRY_AFTER));
+}
+
+// ---------- request ID ----------
+
+#[ignore = "нужна PostgreSQL (см. комментарий в начале файла)"]
+#[sqlx::test(migrations = "./migrations")]
+async fn every_response_has_request_id_and_safe_incoming_id_is_kept(pool: PgPool) {
+    let app = app(pool);
+
+    // Своего ID нет - генерируем (UUID), и он разный у разных запросов.
+    let first = app
+        .send(Request::get("/health").body(Body::empty()).unwrap())
+        .await;
+    let second = app
+        .send(Request::get("/health").body(Body::empty()).unwrap())
+        .await;
+    let first_id = first.headers()["x-request-id"]
+        .to_str()
+        .unwrap()
+        .to_string();
+    let second_id = second.headers()["x-request-id"].to_str().unwrap();
+    assert_eq!(first_id.len(), 36);
+    assert_ne!(first_id, second_id);
+
+    // Безопасный чужой ID сохраняется - так можно сквозно искать запрос в логах.
+    let response = app
+        .send(
+            Request::get("/health")
+                .header("x-request-id", "trace-abc_123")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(response.headers()["x-request-id"], "trace-abc_123");
+
+    // Мусор (пробелы, спецсимволы, слишком длинный) заменяется на наш UUID.
+    for bad in ["has space", "inj\"ect{}", &"a".repeat(65)] {
+        let response = app
+            .send(
+                Request::get("/health")
+                    .header("x-request-id", bad)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(response.headers()["x-request-id"].len(), 36, "{bad}");
+    }
+
+    // Ошибки тоже помечены ID (404 и 401).
+    let response = app
+        .send(Request::get("/nope").body(Body::empty()).unwrap())
+        .await;
+    assert!(response.headers().contains_key("x-request-id"));
+}
+
+// ---------- метрики ----------
+
+#[ignore = "нужна PostgreSQL (см. комментарий в начале файла)"]
+#[sqlx::test(migrations = "./migrations")]
+async fn metrics_endpoint_reports_http_auth_and_pool_metrics(pool: PgPool) {
+    let app = app(pool.clone());
+
+    app.register("alice", "alice@example.com", "password-123")
+        .await;
+    app.login("alice@example.com", "wrong-password").await;
+    app.login("alice@example.com", "password-123").await;
+    app.send(
+        Request::get("/definitely/unknown/1234")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+
+    let metrics_router = build_metrics_router(app.state.clone());
+    let response = metrics_router
+        .oneshot(Request::get("/metrics").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(
+        response.headers()[header::CONTENT_TYPE]
+            .to_str()
+            .unwrap()
+            .starts_with("text/plain")
+    );
+
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let text = String::from_utf8(bytes.to_vec()).unwrap();
+
+    // Метки пути - шаблон маршрута; неизвестные пути схлопываются в "unmatched".
+    assert!(
+        text.contains(r#"http_requests_total{method="POST",path="/auth/login",status="401"}"#),
+        "{text}"
+    );
+    assert!(
+        text.contains(r#"path="/auth/register",status="201""#),
+        "{text}"
+    );
+    assert!(text.contains(r#"path="unmatched",status="404""#), "{text}");
+    assert!(!text.contains("definitely/unknown"), "{text}");
+    assert!(
+        text.contains("http_request_duration_seconds_bucket"),
+        "{text}"
+    );
+    assert!(
+        text.contains(r#"auth_logins_total{result="failure"}"#),
+        "{text}"
+    );
+    assert!(
+        text.contains(r#"auth_logins_total{result="success"}"#),
+        "{text}"
+    );
+    assert!(text.contains("auth_registrations_total"), "{text}");
+    assert!(
+        text.contains(r#"db_pool_connections{state="max"}"#),
+        "{text}"
+    );
+    assert!(text.contains("rtchesz_api_build_info"), "{text}");
+
+    // /metrics нет на публичном роутере API.
+    let (status, _) = app.get("/metrics", None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+// ---------- таймауты БД ----------
+
+#[ignore = "нужна PostgreSQL (см. комментарий в начале файла)"]
+#[sqlx::test(migrations = "./migrations")]
+async fn exhausted_db_pool_gives_503_with_retry_after(pool: PgPool) {
+    let mut config = Config::for_tests(String::new());
+    config.db_max_connections = 1;
+    config.db_acquire_timeout = std::time::Duration::from_millis(200);
+
+    let tight = db::connect_with((*pool.connect_options()).clone(), &config)
+        .await
+        .expect("pool");
+    let state = AppState::new(tight.clone(), config, Mailer::capture()).expect("state");
+    let app = TestApp {
+        router: build_router(state.clone()),
+        state,
+    };
+
+    // Единственное соединение занято - запросу не из чего взять БД.
+    let _held = tight.acquire().await.expect("connection");
+
+    let response = app
+        .post_raw(
+            "/auth/login",
+            json!({ "email": "alice@example.com", "password": "password-123" }),
+        )
+        .await;
+
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(response.headers()[header::RETRY_AFTER], "5");
+    let (_, body) = parse(response).await;
+    assert_eq!(body["code"], "unavailable");
+}
+
+#[ignore = "нужна PostgreSQL (см. комментарий в начале файла)"]
+#[sqlx::test(migrations = "./migrations")]
+async fn statement_timeout_cancels_slow_queries(pool: PgPool) {
+    let mut config = Config::for_tests(String::new());
+    config.db_statement_timeout = std::time::Duration::from_millis(150);
+
+    let limited = db::connect_with((*pool.connect_options()).clone(), &config)
+        .await
+        .expect("pool");
+
+    let started = std::time::Instant::now();
+    let error = sqlx::query("SELECT pg_sleep(5)")
+        .execute(&limited)
+        .await
+        .expect_err("query must be cancelled");
+
+    assert!(started.elapsed() < std::time::Duration::from_secs(2));
+    // 57014 - query_canceled; API отвечает на такое 503.
+    let sqlx::Error::Database(db_error) = &error else {
+        panic!("unexpected error: {error}");
+    };
+    assert_eq!(db_error.code().as_deref(), Some("57014"));
+    assert!(matches!(
+        rtchesz_api::error::AppError::from(error),
+        rtchesz_api::error::AppError::Unavailable
+    ));
 }

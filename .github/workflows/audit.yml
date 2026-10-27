@@ -1,0 +1,30 @@
+name: Security audit
+
+# Проверка зависимостей бэка на известные уязвимости (RustSec).
+on:
+  schedule:
+    - cron: "0 5 * * 1"
+  push:
+    paths:
+      - "apps/api/Cargo.lock"
+      - ".github/workflows/audit.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cargo-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/api
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: Audit
+        working-directory: apps/api
+        run: cargo audit

@@ -20,6 +20,14 @@ pub struct SmtpConfig {
     pub security: SmtpSecurity,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LogFormat {
+    /// Человекочитаемые строки (разработка).
+    Text,
+    /// Одна JSON-строка на событие (продакшен: удобно для Loki, ELK, `jq`).
+    Json,
+}
+
 #[derive(Clone)]
 pub struct Config {
     pub database_url: String,
@@ -34,6 +42,21 @@ pub struct Config {
     pub cors_origins: Vec<String>,
     /// Брать IP клиента из X-Forwarded-For (включать только за доверенным прокси).
     pub trust_proxy: bool,
+
+    /// Размер пула соединений с БД.
+    pub db_max_connections: u32,
+    /// Сколько запрос ждёт свободное соединение из пула, прежде чем получить 503.
+    pub db_acquire_timeout: Duration,
+    /// Максимальное время одного SQL-запроса (`statement_timeout`); 0 - без ограничения.
+    pub db_statement_timeout: Duration,
+
+    /// Сколько после SIGTERM/Ctrl-C ждать завершения активных запросов.
+    pub shutdown_grace: Duration,
+
+    pub log_format: LogFormat,
+    /// Адрес отдельного сервера с `/metrics` (например `0.0.0.0:9100`). Не задан - метрики
+    /// не отдаются. Порт НЕ должен быть доступен из интернета.
+    pub metrics_addr: Option<String>,
 
     pub reset_code_ttl: Duration,
     pub reset_token_ttl: Duration,
@@ -77,6 +100,20 @@ impl Config {
             jwt_ttl: Duration::from_secs(parse_env("JWT_TTL_HOURS", 168u64)? * 3600),
             cors_origins,
             trust_proxy: parse_env("TRUST_PROXY", false)?,
+            db_max_connections: parse_env("DB_MAX_CONNECTIONS", 10u32)?.max(1),
+            db_acquire_timeout: Duration::from_secs(
+                parse_env("DB_ACQUIRE_TIMEOUT_SECS", 5u64)?.max(1),
+            ),
+            db_statement_timeout: Duration::from_secs(parse_env(
+                "DB_STATEMENT_TIMEOUT_SECS",
+                10u64,
+            )?),
+            shutdown_grace: Duration::from_secs(parse_env("SHUTDOWN_GRACE_SECS", 20u64)?),
+            log_format: parse_log_format()?,
+            metrics_addr: env::var("METRICS_ADDR")
+                .ok()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty()),
             reset_code_ttl: Duration::from_secs(parse_env("RESET_CODE_TTL_MINUTES", 10u64)? * 60),
             reset_token_ttl: Duration::from_secs(parse_env("RESET_TOKEN_TTL_MINUTES", 15u64)? * 60),
             reset_resend_cooldown: Duration::from_secs(parse_env(
@@ -99,6 +136,12 @@ impl Config {
             jwt_ttl: Duration::from_secs(3600),
             cors_origins: vec!["http://localhost:5173".to_string()],
             trust_proxy: false,
+            db_max_connections: 5,
+            db_acquire_timeout: Duration::from_secs(5),
+            db_statement_timeout: Duration::from_secs(10),
+            shutdown_grace: Duration::from_secs(1),
+            log_format: LogFormat::Text,
+            metrics_addr: None,
             reset_code_ttl: Duration::from_secs(600),
             reset_token_ttl: Duration::from_secs(900),
             reset_resend_cooldown: Duration::from_secs(60),
@@ -148,6 +191,19 @@ impl SmtpConfig {
             from,
             security,
         }))
+    }
+}
+
+fn parse_log_format() -> Result<LogFormat, String> {
+    match env::var("LOG_FORMAT")
+        .unwrap_or_else(|_| "text".to_string())
+        .trim()
+        .to_lowercase()
+        .as_str()
+    {
+        "text" | "" => Ok(LogFormat::Text),
+        "json" => Ok(LogFormat::Json),
+        _ => Err("LOG_FORMAT must be one of: text, json".to_string()),
     }
 }
 

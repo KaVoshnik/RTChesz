@@ -28,6 +28,10 @@ pub enum AppError {
     #[error("Слишком много попыток")]
     TooManyRequests(u64),
 
+    /// БД перегружена или недоступна (нет свободных соединений, таймаут запроса).
+    #[error("Сервис временно недоступен, попробуйте чуть позже")]
+    Unavailable,
+
     #[error("Внутренняя ошибка сервера")]
     Internal,
 }
@@ -48,6 +52,7 @@ impl AppError {
             AppError::NotFound(_) => StatusCode::NOT_FOUND,
             AppError::Conflict(_) => StatusCode::CONFLICT,
             AppError::TooManyRequests(_) => StatusCode::TOO_MANY_REQUESTS,
+            AppError::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
             AppError::Internal => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -59,6 +64,7 @@ impl AppError {
             AppError::NotFound(_) => "not_found",
             AppError::Conflict(_) => "conflict",
             AppError::TooManyRequests(_) => "too_many_requests",
+            AppError::Unavailable => "unavailable",
             AppError::Internal => "internal",
         }
     }
@@ -79,6 +85,11 @@ impl IntoResponse for AppError {
                     response.headers_mut().insert(header::RETRY_AFTER, value);
                 }
             }
+            AppError::Unavailable => {
+                response
+                    .headers_mut()
+                    .insert(header::RETRY_AFTER, HeaderValue::from_static("5"));
+            }
             AppError::Unauthorized(_) => {
                 response
                     .headers_mut()
@@ -93,7 +104,22 @@ impl IntoResponse for AppError {
 
 impl From<sqlx::Error> for AppError {
     fn from(error: sqlx::Error) -> Self {
+        if is_overload(&error) {
+            tracing::error!(%error, "database is overloaded or unreachable");
+            return AppError::Unavailable;
+        }
+
         tracing::error!(%error, "database error");
         AppError::Internal
+    }
+}
+
+/// Ошибки "БД не успевает/не отвечает": лучше честно сказать 503, а не 500.
+fn is_overload(error: &sqlx::Error) -> bool {
+    match error {
+        sqlx::Error::PoolTimedOut | sqlx::Error::PoolClosed | sqlx::Error::Io(_) => true,
+        // 57014 - query_canceled (сработал statement_timeout).
+        sqlx::Error::Database(db_error) => db_error.code().as_deref() == Some("57014"),
+        _ => false,
     }
 }

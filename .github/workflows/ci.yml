@@ -5,37 +5,183 @@ on:
     branches: ["**"]
   pull_request:
     branches: ["main"]
+  workflow_dispatch:
+
+# Новый пуш в ветку отменяет её предыдущую проверку. Для main не отменяем:
+# иначе свежий коммит мог бы оборвать деплой на полпути.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
-  build:
+  api:
+    name: API - fmt, clippy, tests
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: apps/api
+
+    # Настоящая PostgreSQL (той же версии, что в проде): #[sqlx::test] создаёт
+    # чистую БД под каждый интеграционный тест.
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/api
+
       - name: Format
-        working-directory: ./apps/api
         run: cargo fmt --all -- --check
+
       - name: Lint
-        working-directory: ./apps/api
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --all-targets --all-features --locked -- -D warnings
+
+      # --include-ignored: интеграционные тесты помечены #[ignore], без этого флага
+      # в CI выполнялись бы только юнит-тесты.
       - name: Test
-        working-directory: ./apps/api
-        run: cargo test
+        run: cargo test --locked -- --include-ignored
 
-      # - name: Install Node.js dependencies
-      #   run: npm ci
-      # - name: Lint
-      #   run: npm run lint
-      # - name: Type Check
-      #   run: npm run typecheck
-      # - name: Test
-      #   run: npm test
-      # - name: Build
-      #   run: npm run build
+  docker:
+    name: API - сборка Docker-образа
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
 
-      # Это крч для тестов на фронте, перепишешь под себя/раскоментишь если нужно, я не трогаю
-      # т.к. не шарю че у тя по фронту будет в архитектуре,
-      # эт пример просто как я писал для nodejs но работает и с тайпом т.к. одно и то же по сути
+      - uses: docker/setup-buildx-action@v3
+
+      # Сервер собирает тот же образ при деплое: ловим поломку Dockerfile до деплоя.
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infra/api.Dockerfile
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  infra:
+    name: Infra - compose и скрипты
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compose files are valid
+        working-directory: infra
+        env:
+          DOMAIN: example.com
+          POSTGRES_PASSWORD: ci
+          JWT_SECRET: ci-ci-ci-ci-ci-ci-ci-ci-ci-ci-ci-ci-ci-ci-ci-ci
+          GRAFANA_PASSWORD: ci
+        run: |
+          docker compose -f docker-compose.yml config -q
+          docker compose -f docker-compose.prod.yml config -q
+          docker compose -f monitoring/docker-compose.monitoring.yml config -q
+
+      - name: Shell scripts
+        run: shellcheck --severity=warning infra/*.sh
+
+  deploy:
+    name: Деплой на сервер
+    needs: [api, docker, infra]
+    # Только пуш в main, после того как всё выше позеленело.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    # Два деплоя не идут одновременно, и новый не обрывает идущий.
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+      DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+      DEPLOY_PORT: ${{ vars.DEPLOY_PORT || '22' }}
+      DEPLOY_PATH: ${{ vars.DEPLOY_PATH || '/opt/rtchesz' }}
+      PUBLIC_URL: ${{ vars.PUBLIC_URL || 'https://rtchesz.ru' }}
+
+    steps:
+      - name: Секреты заданы?
+        id: config
+        run: |
+          missing=""
+          for name in DEPLOY_HOST DEPLOY_USER DEPLOY_SSH_KEY DEPLOY_KNOWN_HOSTS; do
+            [[ -n "${!name}" ]] || missing="$missing $name"
+          done
+          if [[ -n "$missing" ]]; then
+            echo "::warning title=Деплой пропущен::Не заданы секреты:$missing (см. docs/OPERATIONS.md)"
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Настроить SSH
+        if: steps.config.outputs.enabled == 'true'
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          # Отпечаток сервера зафиксирован заранее: без слепого доверия при подключении.
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      - name: Деплой
+        if: steps.config.outputs.enabled == 'true'
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" \
+            -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "bash '$DEPLOY_PATH/infra/deploy.sh' '$GITHUB_SHA'"
+
+      - name: Проверка снаружи
+        if: steps.config.outputs.enabled == 'true'
+        run: |
+          curl --fail --silent --show-error --max-time 15 \
+            --retry 12 --retry-delay 5 --retry-all-errors \
+            "$PUBLIC_URL/api/health" | tee /dev/stderr | grep -q '"status":"ok"'
+
+# --- Фронтенд (пока выключено) -------------------------------------------------------
+# Шаги из старого CI, когда понадобится проверка фронта - оформить отдельным job `web`
+# (working-directory: apps/web, pnpm, actions/setup-node) и добавить его в `needs` у `deploy`:
+#
+#   - name: Install Node.js dependencies
+#     run: npm ci
+#   - name: Lint
+#     run: npm run lint
+#   - name: Type Check
+#     run: npm run typecheck
+#   - name: Test
+#     run: npm test
+#   - name: Build
+#     run: npm run build
