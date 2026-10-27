@@ -377,7 +377,9 @@ async fn logout_requires_authorization(pool: PgPool) {
 #[ignore = "нужна PostgreSQL (см. комментарий в начале файла)"]
 #[sqlx::test(migrations = "./migrations")]
 async fn token_without_ver_claim_issued_before_update_still_works(pool: PgPool) {
-    use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+    use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+    use hmac::{Hmac, KeyInit, Mac};
+    use sha2::Sha256;
 
     let app = app(pool);
     let (_, body) = app
@@ -390,14 +392,13 @@ async fn token_without_ver_claim_issued_before_update_still_works(pool: PgPool) 
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs();
-    let claims = json!({ "sub": user_id, "iat": now, "exp": now + 600 });
-    let secret = app.state.config.jwt_secret.clone();
-    let legacy = encode(
-        &Header::new(Algorithm::HS256),
-        &claims,
-        &EncodingKey::from_secret(secret.as_bytes()),
-    )
-    .unwrap();
+    let header = URL_SAFE_NO_PAD.encode(r#"{"typ":"JWT","alg":"HS256"}"#);
+    let payload =
+        URL_SAFE_NO_PAD.encode(json!({ "sub": user_id, "iat": now, "exp": now + 600 }).to_string());
+    let mut mac = Hmac::<Sha256>::new_from_slice(app.state.config.jwt_secret.as_bytes()).unwrap();
+    mac.update(format!("{header}.{payload}").as_bytes());
+    let signature = URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes());
+    let legacy = format!("{header}.{payload}.{signature}");
 
     assert_eq!(app.get("/auth/me", Some(&legacy)).await.0, StatusCode::OK);
 }
