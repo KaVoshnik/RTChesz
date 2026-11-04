@@ -63,6 +63,11 @@ pub struct Config {
     pub reset_resend_cooldown: Duration,
     pub reset_max_attempts: i16,
 
+    /// Сколько ждать первый ход каждой стороны; не сходили - партия отменяется.
+    pub game_first_move_timeout: Duration,
+    /// Сколько живёт открытый вызов без соперника, потом удаляется.
+    pub game_challenge_ttl: Duration,
+
     /// Если не задан, письма не отправляются, а код пишется в лог (режим разработки).
     pub smtp: Option<SmtpConfig>,
 }
@@ -121,6 +126,12 @@ impl Config {
                 60u64,
             )?),
             reset_max_attempts: parse_env("RESET_MAX_ATTEMPTS", 5i16)?,
+            game_first_move_timeout: Duration::from_secs(
+                parse_env("GAME_FIRST_MOVE_TIMEOUT_SECS", 60u64)?.max(1),
+            ),
+            game_challenge_ttl: Duration::from_secs(
+                parse_env("GAME_CHALLENGE_TTL_MINUTES", 15u64)?.max(1) * 60,
+            ),
             smtp: SmtpConfig::from_env()?,
         })
     }
@@ -146,6 +157,8 @@ impl Config {
             reset_token_ttl: Duration::from_secs(900),
             reset_resend_cooldown: Duration::from_secs(60),
             reset_max_attempts: 5,
+            game_first_move_timeout: Duration::from_secs(60),
+            game_challenge_ttl: Duration::from_secs(900),
             smtp: None,
         }
     }

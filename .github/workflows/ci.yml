@@ -109,9 +109,66 @@ jobs:
       - name: Shell scripts
         run: shellcheck --severity=warning infra/*.sh
 
+  web:
+    name: Web - lint, формат, сборка
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/web
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # pnpm 10 читает lockfileVersion 9.0, как в apps/web/pnpm-lock.yaml.
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      # Та же major-версия Node, что в infra/web.Dockerfile.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: apps/web/pnpm-lock.yaml
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm run lint
+
+      - name: Format
+        run: pnpm run format:check
+
+      # `build` = tsc -b (проверка типов) + vite build.
+      - name: Typecheck and build
+        run: pnpm run build
+        env:
+          VITE_API_URL: /api
+
+  docker-web:
+    name: Web - сборка Docker-образа
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      # Сервер собирает этот образ при деплое: ловим поломку до деплоя.
+      - name: Build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: infra/web.Dockerfile
+          push: false
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,mode=max,scope=web
+
   deploy:
     name: Деплой на сервер
-    needs: [api, docker, infra]
+    needs: [api, docker, web, docker-web, infra]
     # Только пуш в main, после того как всё выше позеленело.
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -170,18 +227,3 @@ jobs:
           curl --fail --silent --show-error --max-time 15 \
             --retry 12 --retry-delay 5 --retry-all-errors \
             "$PUBLIC_URL/api/health" | tee /dev/stderr | grep -q '"status":"ok"'
-
-# --- Фронтенд (пока выключено) -------------------------------------------------------
-# Шаги из старого CI, когда понадобится проверка фронта - оформить отдельным job `web`
-# (working-directory: apps/web, pnpm, actions/setup-node) и добавить его в `needs` у `deploy`:
-#
-#   - name: Install Node.js dependencies
-#     run: npm ci
-#   - name: Lint
-#     run: npm run lint
-#   - name: Type Check
-#     run: npm run typecheck
-#   - name: Test
-#     run: npm test
-#   - name: Build
-#     run: npm run build

@@ -4,6 +4,7 @@ pub mod config;
 pub mod db;
 pub mod error;
 pub mod extract;
+pub mod games;
 pub mod mail;
 pub mod metrics;
 pub mod observability;

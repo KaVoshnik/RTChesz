@@ -1,4 +1,5 @@
 mod auth;
+mod games;
 mod health;
 
 use axum::{
@@ -33,6 +34,16 @@ pub fn build_router(state: AppState) -> Router {
         .route("/auth/reset-password", post(auth::reset_password))
         .route("/auth/me", get(auth::me))
         .route("/auth/logout", post(auth::logout))
+        .route("/games", post(games::create))
+        .route("/games/lobby", get(games::lobby))
+        .route("/games/mine", get(games::mine))
+        .route("/games/{id}", get(games::get))
+        .route("/games/{id}/join", post(games::join))
+        .route("/games/{id}/moves", post(games::play_move))
+        .route("/games/{id}/resign", post(games::resign))
+        .route("/games/{id}/abort", post(games::abort))
+        .route("/games/{id}/draw", post(games::offer_draw))
+        .route("/games/{id}/draw/decline", post(games::decline_draw))
         .fallback(not_found)
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         // Request ID, логи запросов и метрики. Должен быть снаружи обработчиков и внутри CORS.
