@@ -18,6 +18,10 @@ pub enum AppError {
     #[error("{0}")]
     Unauthorized(String),
 
+    /// Авторизован, но действие ему недоступно (например, чужая партия).
+    #[error("{0}")]
+    Forbidden(String),
+
     #[error("{0}")]
     NotFound(String),
 
@@ -49,6 +53,7 @@ impl AppError {
         match self {
             AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
             AppError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
+            AppError::Forbidden(_) => StatusCode::FORBIDDEN,
             AppError::NotFound(_) => StatusCode::NOT_FOUND,
             AppError::Conflict(_) => StatusCode::CONFLICT,
             AppError::TooManyRequests(_) => StatusCode::TOO_MANY_REQUESTS,
@@ -61,6 +66,7 @@ impl AppError {
         match self {
             AppError::BadRequest(_) => "bad_request",
             AppError::Unauthorized(_) => "unauthorized",
+            AppError::Forbidden(_) => "forbidden",
             AppError::NotFound(_) => "not_found",
             AppError::Conflict(_) => "conflict",
             AppError::TooManyRequests(_) => "too_many_requests",

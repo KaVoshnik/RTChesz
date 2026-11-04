@@ -42,6 +42,16 @@ pub fn init() -> &'static PrometheusHandle {
             "auth_password_resets_total",
             "Успешные смены пароля по коду"
         );
+        describe_counter!("games_created_total", "Созданные партии (вызовы)");
+        describe_counter!(
+            "games_started_total",
+            "Партии, к которым присоединился соперник"
+        );
+        describe_counter!(
+            "games_finished_total",
+            "Законченные партии по причине окончания"
+        );
+        describe_counter!("game_moves_total", "Сыгранные ходы");
         describe_gauge!(
             "process_start_time_seconds",
             "Время запуска процесса (unix)"

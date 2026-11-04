@@ -6,7 +6,7 @@ use std::{
 };
 
 use rtchesz_api::{
-    config::Config, db, mail::Mailer, metrics, observability, repo::password_resets, routes,
+    config::Config, db, games, mail::Mailer, metrics, observability, repo::password_resets, routes,
     state::AppState,
 };
 use tokio::sync::watch;
@@ -78,8 +78,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Фоновая уборка: старые записи восстановления пароля, истёкшие счётчики лимитов, метрики.
+/// Фоновые задачи: уборка (пароли, лимиты, старые вызовы), часы партий, метрики.
 fn spawn_maintenance(state: AppState) {
+    let sweeper = state.clone();
+
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(10 * 60));
 
@@ -91,6 +93,18 @@ fn spawn_maintenance(state: AppState) {
             if let Err(error) = password_resets::purge_old(&state.pool).await {
                 tracing::warn!(%error, "failed to purge old password resets");
             }
+
+            games::service::purge_stale_challenges(&state).await;
+        }
+    });
+
+    // Флажки и таймауты первого хода: закрываем партии, в которые никто не заходит.
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(2));
+
+        loop {
+            interval.tick().await;
+            games::service::sweep(&sweeper).await;
         }
     });
 
