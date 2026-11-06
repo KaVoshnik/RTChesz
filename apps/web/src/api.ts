@@ -1,5 +1,5 @@
 // Адрес бэкенда берётся из файла .env (переменная должна начинаться с VITE_)
-const API_URL: string = import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:3000';
+const API_URL: string = import.meta.env.VITE_API_URL ?? 'http://localhost:5173';
 
 // Сколько ждём ответ сервера, прежде чем отменить запрос
 const REQUEST_TIMEOUT_MS = 10_000;

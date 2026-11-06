@@ -219,6 +219,9 @@ function App() {
     console.log('Google sign-in');
   };
 
+  // Игра - отдельная страница (game.html), токен у неё общий с сайтом
+  const openGame = () => window.location.assign('/game.html');
+
   const isLogin = screen === 'login';
 
   return (
@@ -471,7 +474,10 @@ function App() {
               <h2 className="auth-title">Готово!</h2>
               <p className="auth-subtitle">Вы успешно вошли в аккаунт</p>
               <div className="auth-form">
-                <button type="button" className="auth-button" onClick={() => goTo('landing')}>
+                <button type="button" className="auth-button" onClick={openGame}>
+                  Играть
+                </button>
+                <button type="button" className="auth-link" onClick={() => goTo('landing')}>
                   На главную
                 </button>
               </div>
