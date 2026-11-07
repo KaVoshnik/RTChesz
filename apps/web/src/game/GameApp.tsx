@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+  type PointerEvent as ReactPointerEvent,
+} from 'react';
 import {
   ApiError,
   clearToken,
@@ -25,7 +33,17 @@ import {
   type Me,
   type Side,
 } from './gameApi';
-import { kingInCheck, legalMoves, moveToUci, parseFen, sqIndex, sqName, type Mv } from './chess';
+import {
+  kingInCheck,
+  legalMoves,
+  moveToUci,
+  parseFen,
+  replay,
+  sqIndex,
+  sqName,
+  type Mv,
+} from './chess';
+import { ArrowLayer, type Arrow, type Brush, type Ring } from './Arrows';
 
 // ---------- Мелочи ----------
 
@@ -402,6 +420,11 @@ function Lobby({ onLogout }: { onLogout: () => void }) {
 
 // ---------- Партия ----------
 
+// Что сейчас делает указатель на доске: тянет фигуру (ЛКМ) или рисует стрелку (ПКМ)
+type Session =
+  | { kind: 'drag'; from: number; sx: number; sy: number; moved: boolean }
+  | { kind: 'draw'; from: number; brush: Brush; ply: number };
+
 function GameView({ id, user, onLogout }: { id: string; user: Me; onLogout: () => void }) {
   const [snap, setSnap] = useState<{ game: Game; at: number } | null>(null);
   const [error, setError] = useState('');
@@ -412,6 +435,21 @@ function GameView({ id, user, onLogout }: { id: string; user: Me; onLogout: () =
   const [now, setNow] = useState(() => Date.now());
   const [copied, setCopied] = useState(false);
   const finished = useRef(false);
+  // null = смотрим текущую позицию; число = смотрим позицию после стольких полуходов
+  const [viewPly, setViewPly] = useState<number | null>(null);
+  const [drag, setDrag] = useState<{
+    from: number;
+    x: number;
+    y: number;
+    over: number | null;
+  } | null>(null);
+  const [marks, setMarks] = useState<{ ply: number; arrows: Arrow[]; rings: Ring[] } | null>(null);
+  const [drawing, setDrawing] = useState<Arrow | null>(null);
+  const boardRef = useRef<HTMLDivElement>(null);
+  const movesRef = useRef<HTMLDivElement>(null);
+  const session = useRef<Session | null>(null);
+  const stopSession = useRef<(() => void) | null>(null);
+  const justDragged = useRef(false);
 
   const accept = useCallback((g: Game) => {
     finished.current = isOver(g);
@@ -466,6 +504,10 @@ function GameView({ id, user, onLogout }: { id: string; user: Me; onLogout: () =
 
   const game = snap?.game ?? null;
   const pos = useMemo(() => (game ? parseFen(game.fen) : null), [game]);
+  const total = game?.moves.length ?? 0;
+  const cur = viewPly ?? total; // сколько полуходов показано на доске
+  const viewing = cur < total;
+  const positions = useMemo(() => (game ? replay(game.moves) : []), [game]);
   const mySide: Side | null = !game
     ? null
     : game.white?.id === user.id
@@ -475,11 +517,65 @@ function GameView({ id, user, onLogout }: { id: string; user: Me; onLogout: () =
         : null;
   const myTurn = !!game && game.status === 'active' && mySide !== null && game.turn === mySide;
 
-  const legal = useMemo(() => (pos && myTurn ? legalMoves(pos) : []), [pos, myTurn]);
+  const canPlay = myTurn && !viewing; // ходить можно только из текущей позиции
+  const flipped = mySide === 'black';
+
+  const legal = useMemo(() => (pos && canPlay ? legalMoves(pos) : []), [pos, canPlay]);
   const targets = useMemo(
     () => (selected === null ? [] : legal.filter((m) => m.from === selected)),
     [legal, selected]
   );
+
+  const goTo = useCallback(
+    (ply: number) => {
+      const p = Math.max(0, Math.min(ply, total));
+      setViewPly(p >= total ? null : p);
+      setSelected(null);
+      setPromo(null);
+    },
+    [total]
+  );
+
+  // Стрелки на клавиатуре: ← → по ходам, Home/End в начало/конец
+  useEffect(() => {
+    const on = (e: KeyboardEvent) => {
+      if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+      const t = e.target;
+      if (
+        t instanceof HTMLElement &&
+        (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))
+      )
+        return;
+      const next =
+        e.key === 'ArrowLeft'
+          ? cur - 1
+          : e.key === 'ArrowRight'
+            ? cur + 1
+            : e.key === 'Home'
+              ? 0
+              : e.key === 'End'
+                ? total
+                : null;
+      if (next === null) return;
+      e.preventDefault();
+      goTo(next);
+    };
+    window.addEventListener('keydown', on);
+    return () => window.removeEventListener('keydown', on);
+  }, [cur, total, goTo]);
+
+  // Держим выбранный ход в видимой части списка (только внутри списка, страницу не двигаем)
+  useEffect(() => {
+    const box = movesRef.current;
+    const el = box?.querySelector<HTMLElement>('.cur');
+    if (!box || !el) return;
+    if (el.offsetTop < box.scrollTop) box.scrollTop = el.offsetTop;
+    else if (el.offsetTop + el.offsetHeight > box.scrollTop + box.clientHeight)
+      box.scrollTop = el.offsetTop + el.offsetHeight - box.clientHeight;
+  }, [cur, total]);
+
+  // Если ушли со страницы посреди перетаскивания - снять слушатели
+  useEffect(() => () => stopSession.current?.(), []);
 
   if (notFound)
     return (
@@ -489,10 +585,11 @@ function GameView({ id, user, onLogout }: { id: string; user: Me; onLogout: () =
     );
   if (!game || !pos || !snap) return <p className="g-muted g-pad">Загрузка партии…</p>;
 
-  const flipped = mySide === 'black';
-  const lastUci = game.moves[game.moves.length - 1];
+  const view = (viewing ? positions[cur] : null) ?? pos; // позиция, которая нарисована на доске
+  const lastUci = cur > 0 ? game.moves[cur - 1] : undefined;
   const last = lastUci ? [sqIndex(lastUci.slice(0, 2)), sqIndex(lastUci.slice(2, 4))] : [];
-  const checkSq = game.status === 'active' ? kingInCheck(pos) : -1;
+  const checkSq = viewing ? kingInCheck(view) : game.status === 'active' ? kingInCheck(pos) : -1;
+  const shownMarks = marks && marks.ply === cur ? marks : null;
 
   const clockMs = (side: Side) => {
     const base = side === 'white' ? game.clock.whiteMs : game.clock.blackMs;
@@ -523,17 +620,116 @@ function GameView({ id, user, onLogout }: { id: string; user: Me; onLogout: () =
     run(() => sendMove(id, uci));
   };
 
+  // Пробует сделать ход from -> to (и кликом, и перетаскиванием). false, если ход нелегальный.
+  const tryMove = (from: number, to: number): boolean => {
+    const hit = legal.filter((m) => m.from === from && m.to === to);
+    if (!hit.length) return false;
+    if (hit.some((m) => m.promo)) setPromo({ from, to });
+    else submit(moveToUci(hit[0]));
+    return true;
+  };
+
+  const isMine = (p: string) => (mySide === 'white') === (p === p.toUpperCase());
+
   const onSquare = (sq: number) => {
-    if (!myTurn || busy) return;
-    const hit = targets.filter((m) => m.to === sq);
-    if (hit.length) {
-      if (hit.some((m) => m.promo)) setPromo({ from: selected!, to: sq });
-      else submit(moveToUci(hit[0]));
-      return;
-    }
+    if (justDragged.current) return; // клик, которым закончилось перетаскивание
+    if (!canPlay || busy) return;
+    if (selected !== null && tryMove(selected, sq)) return;
     const p = pos.board[sq];
-    const mine = p && (mySide === 'white') === (p === p.toUpperCase());
-    setSelected(mine && sq !== selected ? sq : null);
+    setSelected(p && isMine(p) && sq !== selected ? sq : null);
+  };
+
+  const squareAt = (x: number, y: number): number | null => {
+    const el = boardRef.current;
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    const col = Math.floor(((x - r.left) / r.width) * 8);
+    const row = Math.floor(((y - r.top) / r.height) * 8);
+    if (col < 0 || col > 7 || row < 0 || row > 7) return null;
+    return flipped ? 63 - (row * 8 + col) : row * 8 + col;
+  };
+
+  const toggleMark = (s: Extract<Session, { kind: 'draw' }>, to: number) =>
+    setMarks((prev) => {
+      const base = prev && prev.ply === s.ply ? prev : { ply: s.ply, arrows: [], rings: [] };
+      if (to === s.from) {
+        const had = base.rings.find((r) => r.sq === to);
+        const rings = base.rings.filter((r) => r.sq !== to);
+        if (!had || had.brush !== s.brush) rings.push({ sq: to, brush: s.brush });
+        return { ...base, rings };
+      }
+      const same = (a: Arrow) => a.from === s.from && a.to === to;
+      const had = base.arrows.find(same);
+      const arrows = base.arrows.filter((a) => !same(a));
+      if (!had || had.brush !== s.brush) arrows.push({ from: s.from, to, brush: s.brush });
+      return { ...base, arrows };
+    });
+
+  // ЛКМ по своей фигуре - тянем её; ПКМ - рисуем стрелку (Shift - красная, Ctrl - синяя, Alt - жёлтая)
+  const onBoardDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (session.current || promo) return;
+    const sq = squareAt(e.clientX, e.clientY);
+    if (sq === null) return;
+
+    if (e.button === 2) {
+      const brush: Brush = e.shiftKey ? 'red' : e.ctrlKey ? 'blue' : e.altKey ? 'yellow' : 'green';
+      session.current = { kind: 'draw', from: sq, brush, ply: cur };
+      setDrawing({ from: sq, to: sq, brush });
+    } else if (e.button === 0) {
+      setMarks(null); // обычный клик стирает стрелки
+      const p = view.board[sq];
+      if (!canPlay || busy || !p || !isMine(p) || !legal.some((m) => m.from === sq)) return;
+      session.current = { kind: 'drag', from: sq, sx: e.clientX, sy: e.clientY, moved: false };
+    } else return;
+
+    const move = (ev: PointerEvent) => {
+      const s = session.current;
+      if (!s) return;
+      if (s.kind === 'drag') {
+        if (!s.moved && Math.hypot(ev.clientX - s.sx, ev.clientY - s.sy) < 5) return;
+        if (!s.moved) {
+          s.moved = true;
+          setSelected(s.from); // показать, куда можно пойти
+        }
+        setDrag({
+          from: s.from,
+          x: ev.clientX,
+          y: ev.clientY,
+          over: squareAt(ev.clientX, ev.clientY),
+        });
+      } else {
+        const to = squareAt(ev.clientX, ev.clientY);
+        if (to !== null) setDrawing((d) => (d && d.to !== to ? { ...d, to } : d));
+      }
+    };
+    const up = (ev: PointerEvent) => {
+      const s = session.current;
+      stop();
+      if (!s) return;
+      const to = squareAt(ev.clientX, ev.clientY);
+      if (s.kind === 'draw') {
+        if (to !== null) toggleMark(s, to);
+      } else if (s.moved) {
+        justDragged.current = true; // следом прилетит click на ту же клетку - его игнорируем
+        setTimeout(() => {
+          justDragged.current = false;
+        }, 0);
+        if (to !== null && to !== s.from) tryMove(s.from, to);
+      }
+    };
+    const stop = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', stop);
+      session.current = null;
+      stopSession.current = null;
+      setDrag(null);
+      setDrawing(null);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', stop);
+    stopSession.current = stop;
   };
 
   const order = flipped ? [...Array(64).keys()].reverse() : [...Array(64).keys()];
@@ -564,11 +760,18 @@ function GameView({ id, user, onLogout }: { id: string; user: Me; onLogout: () =
     <main className="g-game">
       <div className="g-boardcol">
         {playerBar(top)}
-        <div className="g-board" role="grid" aria-label="Шахматная доска">
+        <div
+          ref={boardRef}
+          className={`g-board${viewing ? ' review' : ''}${drag ? ' dragging' : ''}`}
+          role="grid"
+          aria-label="Шахматная доска"
+          onPointerDown={onBoardDown}
+          onContextMenu={(e) => e.preventDefault()}
+        >
           {order.map((sq) => {
             const r = Math.floor(sq / 8);
             const f = sq % 8;
-            const piece = pos.board[sq];
+            const piece = view.board[sq];
             const target = targets.find((m) => m.to === sq);
             const cls = [
               'g-sq',
@@ -581,14 +784,17 @@ function GameView({ id, user, onLogout }: { id: string; user: Me; onLogout: () =
                   ? 'cap'
                   : 'mv'
                 : '',
-              myTurn ? 'live' : '',
+              drag?.over === sq && target ? 'over' : '',
+              canPlay ? 'live' : '',
             ].join(' ');
             const showFile = flipped ? r === 0 : r === 7;
             const showRank = flipped ? f === 7 : f === 0;
             return (
               <div key={sq} className={cls} onClick={() => onSquare(sq)} aria-label={sqName(sq)}>
                 {piece && (
-                  <span className={`g-piece ${piece === piece.toUpperCase() ? 'w' : 'b'}`}>
+                  <span
+                    className={`g-piece ${piece === piece.toUpperCase() ? 'w' : 'b'}${drag?.from === sq ? ' lifted' : ''}`}
+                  >
                     {GLYPH[piece.toLowerCase()]}
                   </span>
                 )}
@@ -597,6 +803,12 @@ function GameView({ id, user, onLogout }: { id: string; user: Me; onLogout: () =
               </div>
             );
           })}
+          <ArrowLayer
+            arrows={shownMarks?.arrows ?? []}
+            rings={shownMarks?.rings ?? []}
+            preview={drawing}
+            flipped={flipped}
+          />
           {promo && (
             <div className="g-promo" onClick={() => setPromo(null)}>
               <div className="g-card" onClick={(e) => e.stopPropagation()}>
@@ -620,6 +832,14 @@ function GameView({ id, user, onLogout }: { id: string; user: Me; onLogout: () =
           )}
         </div>
         {playerBar(bottom)}
+        {drag && view.board[drag.from] && (
+          <span
+            className={`g-piece g-ghost ${view.board[drag.from] === view.board[drag.from]!.toUpperCase() ? 'w' : 'b'}`}
+            style={{ left: drag.x, top: drag.y }}
+          >
+            {GLYPH[view.board[drag.from]!.toLowerCase()]}
+          </span>
+        )}
       </div>
 
       <aside className="g-side">
@@ -769,16 +989,61 @@ function GameView({ id, user, onLogout }: { id: string; user: Me; onLogout: () =
 
         <div className="g-card g-moves">
           <h3>Ходы</h3>
-          {pairs.length === 0 && <p className="g-muted">Ходов ещё нет</p>}
-          <ol>
-            {pairs.map((p, i) => (
-              <li key={i}>
-                <span className="n">{i + 1}.</span>
-                <span>{p[0]}</span>
-                <span>{p[1] ?? ''}</span>
-              </li>
+          <div className="g-nav">
+            {(
+              [
+                ['«', 'В начало (Home)', 0, cur === 0],
+                ['‹', 'Назад (←)', cur - 1, cur === 0],
+                ['›', 'Вперёд (→)', cur + 1, !viewing],
+                ['»', 'К текущей позиции (End)', total, !viewing],
+              ] as const
+            ).map(([label, title, to, off]) => (
+              <button
+                key={label}
+                type="button"
+                className="g-btn small ghost"
+                title={title}
+                aria-label={title}
+                disabled={off}
+                onClick={() => goTo(to)}
+              >
+                {label}
+              </button>
             ))}
-          </ol>
+          </div>
+          {viewing && (
+            <div className="g-viewbar">
+              Просмотр: ход {cur} из {total}
+              <button type="button" className="g-link" onClick={() => goTo(total)}>
+                К текущей
+              </button>
+            </div>
+          )}
+          {pairs.length === 0 && <p className="g-muted">Ходов ещё нет</p>}
+          <div className="g-movelist" ref={movesRef}>
+            <ol>
+              {pairs.map((p, i) => (
+                <li key={i}>
+                  <span className="n">{i + 1}.</span>
+                  {[0, 1].map((j) => {
+                    const ply = i * 2 + j + 1;
+                    return p[j] === undefined ? (
+                      <span key={j} />
+                    ) : (
+                      <button
+                        key={j}
+                        type="button"
+                        className={`g-mv${cur === ply ? ' cur' : ''}`}
+                        onClick={() => goTo(ply)}
+                      >
+                        {p[j]}
+                      </button>
+                    );
+                  })}
+                </li>
+              ))}
+            </ol>
+          </div>
         </div>
       </aside>
     </main>

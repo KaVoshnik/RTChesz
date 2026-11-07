@@ -224,3 +224,49 @@ export function kingInCheck(pos: Pos): number {
 }
 
 export const moveToUci = (m: Mv) => sqName(m.from) + sqName(m.to) + (m.promo ?? '');
+
+export const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+
+export function uciToMv(uci: string): Mv {
+  const promo = uci[4];
+  return {
+    from: sqIndex(uci.slice(0, 2)),
+    to: sqIndex(uci.slice(2, 4)),
+    ...(promo ? { promo: promo as NonNullable<Mv['promo']> } : {}),
+  };
+}
+
+/** Делает ход (уже проверенный сервером) и возвращает новую позицию. */
+export function applyMove(pos: Pos, m: Mv): Pos {
+  const p = pos.board[m.from]!;
+  const kind = p.toLowerCase();
+  let castling = pos.castling;
+  const strip = (rights: string) => {
+    for (const c of rights) castling = castling.replace(c, '');
+  };
+  if (kind === 'k') strip(colorOf(p) === 'w' ? 'KQ' : 'kq');
+  for (const sq of [m.from, m.to]) {
+    if (sq === 63) strip('K');
+    else if (sq === 56) strip('Q');
+    else if (sq === 7) strip('k');
+    else if (sq === 0) strip('q');
+  }
+  return {
+    board: boardAfter(pos, m),
+    turn: pos.turn === 'w' ? 'b' : 'w',
+    castling,
+    ep: kind === 'p' && Math.abs(m.to - m.from) === 16 ? (m.from + m.to) / 2 : -1,
+  };
+}
+
+/** Все позиции партии: [i] - после i полуходов, [0] - начальная. */
+export function replay(moves: string[]): Pos[] {
+  const out = [parseFen(START_FEN)];
+  for (const uci of moves) {
+    const prev = out[out.length - 1];
+    const m = uciToMv(uci);
+    if (!prev.board[m.from]) break; // повреждённая запись: показываем сколько удалось
+    out.push(applyMove(prev, m));
+  }
+  return out;
+}
