@@ -217,7 +217,7 @@ input {
   padding: 20px 16px;
 }
 .g-boardcol {
-  --size: min(92vw, calc(100vh - 170px), 640px);
+  --size: min(92vw, calc(100vh - 260px), 640px);
   width: var(--size);
   display: flex;
   flex-direction: column;
@@ -454,7 +454,7 @@ input {
 
 @media (max-width: 760px) {
   .g-boardcol {
-    --size: min(96vw, calc(100vh - 200px));
+    --size: min(96vw, calc(100vh - 290px));
   }
 }
 
@@ -496,4 +496,84 @@ input {
 .g-mv.cur {
   background: #706c61;
   color: #efe9dc;
+}
+
+/* ---------- Срубленные фигуры ---------- */
+.g-caprow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 8px;
+  min-height: 42px; /* чтобы доска не прыгала при первом взятии */
+  padding: 0 4px;
+}
+.g-capgrp {
+  display: inline-flex;
+}
+.g-cap {
+  display: inline-block;
+  font-size: 36px;
+  line-height: 1;
+  margin-left: -12px;
+  cursor: default;
+  transform-origin: 50% 90%; /* желе качается от «основания» */
+}
+.g-capgrp .g-cap:first-child {
+  margin-left: 0;
+}
+.g-cap.w {
+  color: #fff;
+  text-shadow:
+    0 0 2px #000,
+    0 0 2px #000,
+    0 0 3px #000;
+}
+.g-cap.b {
+  color: #151515;
+  text-shadow: 0 0 2px rgba(255, 255, 255, 0.7);
+}
+.g-cap.jelly {
+  animation: jelly 0.7s;
+}
+@keyframes jelly {
+  0% {
+    transform: scale(1, 1);
+  }
+  20% {
+    transform: scale(0.78, 1.28);
+  }
+  38% {
+    transform: scale(1.2, 0.82);
+  }
+  55% {
+    transform: scale(0.92, 1.1);
+  }
+  72% {
+    transform: scale(1.05, 0.96);
+  }
+  88% {
+    transform: scale(0.99, 1.02);
+  }
+  100% {
+    transform: scale(1, 1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .g-cap.jelly {
+    animation: none;
+  }
+}
+
+.g-score {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  color: #efe9dc;
+  font-size: 15px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.g-lead {
+  color: #9fd88a;
 }
