@@ -423,11 +423,22 @@ function Lobby({ onLogout }: { onLogout: () => void }) {
 
 const CAP_ORDER = 'qrbnp';
 
+const JELLY = [
+  { transform: 'scale(1, 1)' },
+  { transform: 'scale(0.72, 1.35)', offset: 0.18 },
+  { transform: 'scale(1.25, 0.78)', offset: 0.36 },
+  { transform: 'scale(0.9, 1.12)', offset: 0.54 },
+  { transform: 'scale(1.06, 0.95)', offset: 0.72 },
+  { transform: 'scale(0.99, 1.02)', offset: 0.88 },
+  { transform: 'scale(1, 1)' },
+];
+
+// Желейный «баунс» при наведении. Через Web Animations API, а не CSS-класс: так не зависит
+// от стилей и перезапускается с начала на каждое наведение.
 function jelly(e: ReactPointerEvent<HTMLElement>) {
   const el = e.currentTarget;
-  el.classList.remove('jelly');
-  void el.offsetWidth; // перезапустить анимацию, даже если она ещё играет
-  el.classList.add('jelly');
+  el.getAnimations().forEach((a) => a.cancel());
+  el.animate(JELLY, { duration: 800, easing: 'ease-out' });
 }
 
 const VALUE: Record<string, number> = { p: 1, n: 3, b: 3, r: 5, q: 9 };
@@ -446,7 +457,6 @@ function CapturedRow({ pieces, lead }: { pieces: string[]; lead: number }) {
               key={i}
               className={`g-cap ${p === p.toUpperCase() ? 'w' : 'b'}`}
               onPointerEnter={jelly}
-              onAnimationEnd={(e) => e.currentTarget.classList.remove('jelly')}
             >
               {GLYPH[p.toLowerCase()]}
             </span>

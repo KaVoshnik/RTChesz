@@ -532,37 +532,6 @@ input {
   color: #151515;
   text-shadow: 0 0 2px rgba(255, 255, 255, 0.7);
 }
-.g-cap.jelly {
-  animation: jelly 0.7s;
-}
-@keyframes jelly {
-  0% {
-    transform: scale(1, 1);
-  }
-  20% {
-    transform: scale(0.78, 1.28);
-  }
-  38% {
-    transform: scale(1.2, 0.82);
-  }
-  55% {
-    transform: scale(0.92, 1.1);
-  }
-  72% {
-    transform: scale(1.05, 0.96);
-  }
-  88% {
-    transform: scale(0.99, 1.02);
-  }
-  100% {
-    transform: scale(1, 1);
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .g-cap.jelly {
-    animation: none;
-  }
-}
 
 .g-score {
   margin-left: auto;
