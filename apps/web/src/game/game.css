@@ -289,6 +289,35 @@ input {
   overflow: hidden;
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
   user-select: none;
+  touch-action: none; /* чтобы на телефоне фигуру можно было тянуть, а страница не скроллилась */
+}
+.g-board.review {
+  box-shadow:
+    0 0 0 3px #d9a441,
+    0 8px 28px rgba(0, 0, 0, 0.45);
+}
+.g-board.dragging {
+  cursor: grabbing;
+}
+.g-sq.over {
+  box-shadow: inset 0 0 0 4px rgba(255, 255, 255, 0.75);
+}
+.g-piece.lifted {
+  opacity: 0.3;
+}
+.g-piece.g-ghost {
+  position: fixed;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 50;
+}
+.g-arrows {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 3;
+  pointer-events: none;
 }
 .g-sq {
   position: relative;
@@ -402,8 +431,9 @@ input {
   font-size: 14px;
 }
 
-.g-moves {
-  max-height: 320px;
+.g-movelist {
+  position: relative;
+  max-height: 260px;
   overflow-y: auto;
 }
 .g-moves ol {
@@ -426,4 +456,44 @@ input {
   .g-boardcol {
     --size: min(96vw, calc(100vh - 200px));
   }
+}
+
+.g-nav {
+  display: flex;
+  gap: 6px;
+}
+.g-nav .g-btn {
+  flex: 1;
+  padding: 4px 0;
+  font-size: 18px;
+  line-height: 1.2;
+}
+.g-viewbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: #f1dfb4;
+  color: #5a4516;
+  font-size: 14px;
+  font-weight: 600;
+}
+.g-mv {
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  padding: 1px 4px;
+  margin: 0 2px 0 -4px;
+  cursor: pointer;
+}
+.g-mv:hover {
+  background: rgba(112, 108, 97, 0.15);
+}
+.g-mv.cur {
+  background: #706c61;
+  color: #efe9dc;
 }
