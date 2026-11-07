@@ -34,6 +34,7 @@ import {
   type Side,
 } from './gameApi';
 import {
+  captured,
   kingInCheck,
   legalMoves,
   moveToUci,
@@ -418,6 +419,48 @@ function Lobby({ onLogout }: { onLogout: () => void }) {
   );
 }
 
+// ---------- Срубленные фигуры ----------
+
+const CAP_ORDER = 'qrbnp';
+
+function jelly(e: ReactPointerEvent<HTMLElement>) {
+  const el = e.currentTarget;
+  el.classList.remove('jelly');
+  void el.offsetWidth; // перезапустить анимацию, даже если она ещё играет
+  el.classList.add('jelly');
+}
+
+const VALUE: Record<string, number> = { p: 1, n: 3, b: 3, r: 5, q: 9 };
+const points = (pieces: string[]) => pieces.reduce((sum, p) => sum + VALUE[p.toLowerCase()], 0);
+
+function CapturedRow({ pieces, lead }: { pieces: string[]; lead: number }) {
+  const groups = [...CAP_ORDER]
+    .map((k) => pieces.filter((p) => p.toLowerCase() === k))
+    .filter((g) => g.length > 0);
+  return (
+    <div className="g-caprow" aria-label="Срубленные фигуры">
+      {groups.map((g) => (
+        <span className="g-capgrp" key={g[0].toLowerCase()}>
+          {g.map((p, i) => (
+            <span
+              key={i}
+              className={`g-cap ${p === p.toUpperCase() ? 'w' : 'b'}`}
+              onPointerEnter={jelly}
+              onAnimationEnd={(e) => e.currentTarget.classList.remove('jelly')}
+            >
+              {GLYPH[p.toLowerCase()]}
+            </span>
+          ))}
+        </span>
+      ))}
+      <span className="g-score" title="Очки за срубленные фигуры">
+        {points(pieces)}
+        {lead > 0 && <b className="g-lead">+{lead}</b>}
+      </span>
+    </div>
+  );
+}
+
 // ---------- Партия ----------
 
 // Что сейчас делает указатель на доске: тянет фигуру (ЛКМ) или рисует стрелку (ПКМ)
@@ -750,6 +793,13 @@ function GameView({ id, user, onLogout }: { id: string; user: Me; onLogout: () =
     </div>
   );
 
+  const caps = captured(positions, game.moves, cur);
+  const capturedBy = (side: Side) =>
+    caps.filter((p) => (p === p.toLowerCase()) === (side === 'white')); // белые рубят чёрные (строчные)
+
+  const diff = points(capturedBy('white')) - points(capturedBy('black'));
+  const leadOf = (side: Side) => Math.max(0, side === 'white' ? diff : -diff);
+
   const pairs: string[][] = [];
   for (let i = 0; i < game.moves.length; i += 2) pairs.push(game.moves.slice(i, i + 2));
 
@@ -759,6 +809,7 @@ function GameView({ id, user, onLogout }: { id: string; user: Me; onLogout: () =
   return (
     <main className="g-game">
       <div className="g-boardcol">
+        <CapturedRow pieces={capturedBy(top)} lead={leadOf(top)} />
         {playerBar(top)}
         <div
           ref={boardRef}
@@ -832,6 +883,7 @@ function GameView({ id, user, onLogout }: { id: string; user: Me; onLogout: () =
           )}
         </div>
         {playerBar(bottom)}
+        <CapturedRow pieces={capturedBy(bottom)} lead={leadOf(bottom)} />
         {drag && view.board[drag.from] && (
           <span
             className={`g-piece g-ghost ${view.board[drag.from] === view.board[drag.from]!.toUpperCase() ? 'w' : 'b'}`}

@@ -270,3 +270,18 @@ export function replay(moves: string[]): Pos[] {
   }
   return out;
 }
+
+/** Фигуры, снятые с доски за первые `ply` полуходов (регистр буквы = цвет снятой фигуры). */
+export function captured(positions: Pos[], moves: string[], ply: number): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < ply && i < positions.length - 1; i++) {
+    const pos = positions[i];
+    const m = uciToMv(moves[i]);
+    const p = pos.board[m.from]!;
+    let c = pos.board[m.to];
+    if (!c && p.toLowerCase() === 'p' && m.to === pos.ep && m.from % 8 !== m.to % 8)
+      c = pos.turn === 'w' ? 'p' : 'P'; // взятие на проходе
+    if (c) out.push(c);
+  }
+  return out;
+}
