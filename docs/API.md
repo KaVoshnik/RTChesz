@@ -157,6 +157,7 @@
   "ruleset": "standard",
   "moves": ["e2e4", "e7e5", "g1f3"],
   "fen": "rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2",
+  "legalMoves": ["a7a6", "a7a5", "b7b6", "..."],
   "turn": "black",
   "clock": { "whiteMs": 301000, "blackMs": 300000, "running": "black" },
   "drawOfferedBy": null,
@@ -168,6 +169,7 @@
 
 - `white` / `black` - `null`, пока в вызове нет второго игрока. Ходы - в формате UCI (`e2e4`, `e7e8q`).
 - `turn` - `"white"` / `"black"` только у идущей партии, иначе `null`.
+- `legalMoves` - все разрешённые ходы стороне, которая ходит, в UCI. Пусто, если партия не идёт (ждёт соперника или окончена). Клиенту не нужно считать правила: подсвечивать и отправлять можно только ходы из этого списка.
 - `result` - `"white"`, `"black"` или `"draw"`; `termination` - причина: `checkmate`, `stalemate`,
   `insufficient_material`, `fifty_move_rule`, `threefold_repetition`, `resignation`, `timeout`,
   `draw_agreement`, `aborted`.
