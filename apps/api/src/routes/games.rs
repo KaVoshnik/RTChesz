@@ -97,6 +97,9 @@ pub struct GameResponse {
     /// Ходы в UCI по порядку.
     moves: Vec<String>,
     fen: String,
+    /// Разрешённые ходы стороне, которая ходит, в UCI. Пусто, если партия не идёт.
+    /// Клиенту не нужно считать правила самому: он подсвечивает ходы из этого списка.
+    legal_moves: Vec<String>,
     /// Чей ход (`null`, если партия не идёт).
     turn: Option<&'static str>,
     clock: ClockResponse,
@@ -154,6 +157,11 @@ fn full(row: GameRow) -> Result<GameResponse, AppError> {
         summary: summary(&row),
         ruleset: row.ruleset.clone(),
         fen: game.fen(),
+        legal_moves: if active {
+            game.legal_moves().iter().map(ToString::to_string).collect()
+        } else {
+            Vec::new()
+        },
         turn: active.then(|| color_str(turn)),
         clock: ClockResponse {
             white_ms,

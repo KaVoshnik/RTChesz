@@ -1511,3 +1511,45 @@ async fn concurrent_moves_do_not_corrupt_the_game(pool: PgPool) {
     assert_eq!(statuses, [StatusCode::OK, StatusCode::CONFLICT]);
     assert_eq!(app.game(&id, &alice).await["ply"], 1);
 }
+
+#[ignore = "нужна PostgreSQL (см. комментарий в начале файла)"]
+#[sqlx::test(migrations = "./migrations")]
+async fn game_response_lists_legal_moves(pool: PgPool) {
+    let app = app(pool);
+    let alice = app.player("alice").await;
+    let bob = app.player("bob").await;
+
+    // Вызов никто не принял: партия не идёт, ходов нет.
+    let (status, waiting) = app
+        .post_auth(
+            "/games",
+            json!({ "timeControl": { "initialSecs": 300 }, "color": "white" }),
+            &alice,
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{waiting}");
+    assert_eq!(waiting["legalMoves"], json!([]));
+
+    // Начало партии: 20 ходов белых.
+    let id = app.started_game(&alice, &bob, 300, 0).await;
+    let game = app.game(&id, &alice).await;
+    let moves = game["legalMoves"].as_array().unwrap();
+    assert_eq!(moves.len(), 20);
+    assert!(moves.contains(&json!("e2e4")));
+    assert!(moves.contains(&json!("g1f3")));
+
+    // После хода список относится к чёрным.
+    app.play_all(&id, &alice, &bob, &["e2e4"]).await;
+    let game = app.game(&id, &bob).await;
+    let moves = game["legalMoves"].as_array().unwrap();
+    assert_eq!(moves.len(), 20);
+    assert!(moves.contains(&json!("e7e5")));
+    assert!(!moves.contains(&json!("e2e4")));
+
+    // Партия окончена (сдача): ходов нет.
+    let (status, body) = app
+        .post_auth(&format!("/games/{id}/resign"), json!({}), &bob)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["legalMoves"], json!([]));
+}
