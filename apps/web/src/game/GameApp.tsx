@@ -29,6 +29,7 @@ import {
   resign,
   sendMove,
   type Game,
+  type GameStatus,
   type GameSummary,
   type Me,
   type Side,
@@ -45,6 +46,7 @@ import {
   type Mv,
 } from './chess';
 import { ArrowLayer, type Arrow, type Brush, type Ring } from './Arrows';
+import { playSound, soundForLastMove } from './sounds';
 
 // ---------- Мелочи ----------
 
@@ -578,6 +580,32 @@ function GameView({ id, user, onLogout }: { id: string; user: Me; onLogout: () =
     () => (selected === null ? [] : legal.filter((m) => m.from === selected)),
     [legal, selected]
   );
+
+  // Звуки: старт партии, каждый новый ход и поражение.
+  // prevState хранит, что было на прошлом опросе, чтобы не играть звуки при простом открытии страницы.
+  const prevState = useRef<{ moves: number; status: GameStatus; over: boolean } | null>(null);
+  useEffect(() => {
+    if (!game) return;
+    const before = prevState.current;
+    const over = isOver(game);
+    prevState.current = { moves: total, status: game.status, over };
+
+    if (!before) {
+      // первое открытие: играем только «старт», если партия только что началась
+      if (game.status === 'active' && total === 0) playSound('start');
+      return;
+    }
+
+    // Поражение (мат, время, сдача): только если проиграли именно вы
+    if (!before.over && game.status === 'finished' && mySide && game.result === other(mySide)) {
+      playSound('defeat');
+      return;
+    }
+
+    if (total > before.moves) playSound(soundForLastMove(positions, game.moves));
+    else if (before.status === 'waiting' && game.status === 'active' && total === 0)
+      playSound('start');
+  }, [game, total, mySide, positions]);
 
   const goTo = useCallback(
     (ply: number) => {
